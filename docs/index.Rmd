@@ -124,13 +124,21 @@ m0p <- brm(n_bugs ~ 1 + (1 | language_id),
     		   sample_prior = "only"
     		   )
 
-pp_check(m0p, nsamples = 100) + scale_x_log10()
+pp_check(m0p, nsamples = 100) + 
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ ) +
+  annotation_logticks(side = "b", outside=TRUE) +
+  coord_cartesian(clip = "off") + 
+  xlab("Number of bugs") + 
+  ylab("Density")
 ```
 
 
 ### Posterior predictive checks
 
-Running the above model with default priors and settings (in later examples we will set our own priors),^[Here and in the following examples we've set a seed in order for the results to be reproducible. During the development one should never set a seed---the stochastic elements of these algorithms are key to their reliability.]
+Running the above model with default priors and settings (in later examples we will set our own priors).
 
 ```{r, message=FALSE, warning=FALSE, error=FALSE, message='hide'}
 m0 <- brm(n_bugs ~ 1 + (1 | language_id),
@@ -140,13 +148,21 @@ m0 <- brm(n_bugs ~ 1 + (1 | language_id),
           )
 ```
 
-we then conduct posterior predictive checks.
+We then conduct posterior predictive checks.
 
 ```{r, message=FALSE, warning=FALSE, error=FALSE}
-pp_check(m0, nsamples = 100) + scale_x_log10()
+pp_check(m0) + 
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ ) +
+  annotation_logticks(side = "b", outside=TRUE) +
+  coord_cartesian(clip = "off") + 
+  xlab("Number of bugs") + 
+  ylab("Density")
 ```
 
-As we can see, the model struggles and we don't have a good fit. We'll add the other variables at our disposal and see if we can improve things. But first, let's have a look at the diagnostics.
+As we can see (note that the $x$-axis is logarithmic base $10$, with log ticks displayed along the axis), the model struggles and we don't have a good fit. We'll add the other variables at our disposal and see if we can improve things. But first, let's have a look at the diagnostics.
 
 ### Diagnostics
 
@@ -233,7 +249,7 @@ p$prior[1] <- "normal(0,0.5)"
 p$prior[6] <- "normal(0,5)"
 p$prior[7] <- "weibull(2,1)"
 
-m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
+m1p <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
                  insertions_log + (1 | language_id),
           family = negbinomial(), 
           prior = p, 
@@ -250,7 +266,15 @@ We used only one chain and we sampled for only $1000$ iterations.^[We used Hamil
 Let's now plot $100$ samples, $y_{\mathrm{rep}}$, from our prior probability distribution, and compare them to our empirical data, $y$.
 
 ```{r m1-pripc, warning=FALSE, message=FALSE}
-pp_check(m1, nsamples = 100) + scale_x_log10()
+pp_check(m1p, nsamples = 100) + 
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ ) +
+  annotation_logticks(side = "b", outside=TRUE) +
+  coord_cartesian(clip = "off") + 
+  xlab("Number of bugs") + 
+  ylab("Density")
 ```
 
 In the plot above we've $\log$ transformed the $x$-axis so we can see what's actually happening. In short, the priors are all over the place (and a number of them are $\infty$). 
@@ -265,11 +289,22 @@ m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
           prior = p, 
           refresh = 0
           )
+
+if(max(rhat(m1), na.rm = TRUE) >= 1.01)
+  knitr::knit_exit()
 ```
 
 ### Posterior predictive checks
 ```{r, message=FALSE, warning=FALSE, error=FALSE}
-pp_check(m1) + scale_x_log10()
+pp_check(m1) + 
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ ) +
+  annotation_logticks(side = "b", outside=TRUE) +
+  coord_cartesian(clip = "off") + 
+  xlab("Number of bugs") + 
+  ylab("Density")
 ```
 
 ### Diagnostics
@@ -441,7 +476,7 @@ p$prior[9] <- "weibull(2,1)"
 Next we sample our model using only the priors and conduct prior predictive checks.
 
 ```{r m3-1, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
-m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_log +
+m2p <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_log +
             (1 + devs_log + max_commit_age_log + commits_log + insertions_log | language_id) +
             (1 | project_id),
           family = negbinomial(), 
@@ -455,7 +490,15 @@ m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_
 ```
 
 ```{r m2-post, warning=FALSE, message=FALSE}
-pp_check(m2, nsamples = 100) + scale_x_log10()
+pp_check(m2p, nsamples = 100) + 
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ ) +
+  annotation_logticks(side = "b", outside=TRUE) +
+  coord_cartesian(clip = "off") + 
+  xlab("Number of bugs") + 
+  ylab("Density")
 ```
 
 So, looks good. The priors are all over the place and additionally allow quite absurd values. Let's now sample the model with data.
@@ -470,12 +513,26 @@ m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_
           refresh = 0, 
           control = list(adapt_delta=0.95)
           )
+
+if(max(rhat(m2), na.rm = TRUE) >= 1.01)
+  knitr::knit_exit()
+
+if(sum(subset(np, Parameter == "divergent__")$Value) >= 0)
+  knitr::knit_exit()
 ```
 
 ### Posterior predictive checks
 
 ```{r m2-pripc, warning=FALSE, message=FALSE}
-pp_check(m2, nsamples = 100) + scale_x_log10()
+pp_check(m2, nsamples = 100) + 
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ ) +
+  annotation_logticks(side = "b", outside=TRUE) +
+  coord_cartesian(clip = "off") + 
+  xlab("Number of bugs") + 
+  ylab("Density")
 ```
 
 
@@ -616,7 +673,8 @@ tibble(x = seq(from = 0, to = 3, by = .1)) %>%
                fill = "black", alpha = 2/5, size = 0) +
   xlab(expression(sigma)) + theme_tufte(base_size=22) + 
   annotate("text", x = 1.0, y = 2, label = "Weibull(2,1)", size=6) + 
-  annotate("text", x = 0.5, y = 20, label = "Posterior", size=6)
+  annotate("text", x = 0.7, y = 20, label = "Posterior", size=6) +
+  ylab("Density")
 ```
 
 There's no question that the data has swamped our prior. One clearly sees our wide prior (dark) compared to the 'spike', which is our posterior.
@@ -638,7 +696,13 @@ post %>%
         axis.text.y=element_blank(),
         axis.ticks.y=element_blank()) + 
   xlab("Number of bugs") + 
-  scale_x_continuous(trans="log10")
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ ) +
+  annotation_logticks(side = "b", outside=TRUE) +
+  coord_cartesian(clip = "off") + 
+  xlab("Number of bugs")
 
 # In case one wants to compare deviations from 0 (intercept)
 # # draw samples from the posterior
