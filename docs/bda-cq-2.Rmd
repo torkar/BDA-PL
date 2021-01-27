@@ -483,7 +483,7 @@ Let's also look at a case when there's no significant difference (Coffeescript v
 
 Once again, these are the distributions in differences we get when we reuse the data from our sample and average over them. As we saw previously, with other covariates we get other outcomes.
 
-In the [final analysis](https://rpubs.com/torkar/572170) we'll look briefly at the differences the two models display, and how much the varying effects play a role in predictions. Finally, we'll also do simulations using one of the models, because that's where the rubber hits the road and all that we've done can comes to some use (except for trying to answer a question which really isn't interesting, i.e., generally speaking which language is the 'best').
+In the [final analysis](./bda-cq-summary.html) we'll look briefly at the differences the two models display, and how much the varying effects play a role in predictions. Finally, we'll also do simulations using one of the models, because that's where the rubber hits the road and all that we've done can come to some use (except for trying to answer a question which really isn't interesting, i.e., generally speaking which language is the 'best').
 
 ```{r, include=FALSE}
 # If we want to plot all *non*-significant differences
@@ -497,6 +497,7 @@ for(i in 1:length(contrasts)) { # for each contrast
 ```
 
 # Bayesian variable selection for $\textrm{NB}(\lambda,\phi)$
+
 We'll conduct variable selection for negative-binomial (NB). Unfortunately, the Stan team does not yet (January, 2020) support variable selection for the NB.^[[Projection predictive variable selection](https://github.com/stan-dev/projpred)] However, there's a package that uses MCMC for variable selection of NB distributions [@dvorzakW16vs].
 
 Set our outcome variable:
