@@ -38,10 +38,6 @@ library(ggridges)
 
 OBJECT_DIR  <- "Objects"
 
-## For determinism
-SEED = 20061215
-set.seed(SEED)
-
 # run on multi-core cpus. We use the default four
 options(mc.cores=parallel::detectCores())
 
@@ -109,6 +105,7 @@ In $\mathcal{M}_2$ we add predictors as population-level effects. Finally, in $\
 p <- get_prior(n_bugs ~ 1 + (1 | language_id),
           family = negbinomial(),
           data=toplas.data)
+
 p$prior[1] <- "normal(0,5)"
 p$prior[2] <- "weibull(2,1)"
 ```
@@ -117,7 +114,6 @@ p$prior[2] <- "weibull(2,1)"
 m1 <- brm(n_bugs ~ 1 + (1 | language_id),
           family = negbinomial(),
           data=toplas.data,
-          seed = SEED,
           prior = p)
 ```
 
@@ -126,6 +122,7 @@ p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
                  insertions_s + (1 | language_id),
                family = negbinomial(),
                data = toplas.data)
+
 p$prior[1] <- "normal(0,0.5)"
 p$prior[6] <- "normal(0,5)"
 p$prior[7] <- "weibull(2,1)"
@@ -137,7 +134,6 @@ m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
             insertions_s + (1 | language_id),
           family = negbinomial(),
           data = toplas.data,
-          seed = SEED,
           prior = p)
 ```
 
@@ -149,13 +145,14 @@ p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
                  (1 | project_id),
                family = negbinomial,
                data = toplas.data)
-p$prior[1] <- "normal(0,1)"
+
+p$prior[1] <- "normal(0,0.05)"
 p$prior[6] <- "lkj(2)"
 p$prior[8] <- "normal(0,5)"
 p$prior[9] <- "weibull(2,1)"
 ```
 
-```{r m3, error=FALSE, message=FALSE, warning=FALSE, cache=TRUE, results='hide'}
+```{r m3, error=FALSE, message=FALSE, warning=FALSE, cache=FALSE, results='hide'}
 
 m3 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + 
             insertions_s +
@@ -164,9 +161,6 @@ m3 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
             (1 | project_id),
           family = negbinomial,
           data = toplas.data,
-          seed = SEED,
-          iter = 4e3,
-          control = list(adapt_delta=0.95),
           prior = p)
 ```
 
@@ -210,9 +204,7 @@ For our target model $\mathcal{M}$ we have a wide prior for our intercept, $\alp
 \end{eqnarray}
 \]
 
-We shouldn't expect $\beta$ (i.e., the parameter of a population-level effect) to vary extremely much, and we thus put $\mathcal{N}(0,0.5)$ as a prior on these effects (which is still fairly wide). After all, $\mathcal{N}(0,0.5)$, with four population-level effects, implies $(4 \times 0.5)^2 = \exp(2) \approx 54$, due to the $\log$ link emloyed in a Negative-Binomial.
-
-Let's sample only from priors:
+Let's sample only from priors.
 
 ```{r model_priors, cache=TRUE, warning=FALSE, message=FALSE, error=FALSE, results='hide', cache=TRUE}
 M_priors <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_s +
@@ -224,7 +216,7 @@ M_priors <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + inser
           sample_prior = "only")
 ```
 
-```{r pripc, cache=TRUE,echo=FALSE, fig.margin=TRUE, warning=FALSE, message=FALSE, error=FALSE, fig.cap="Dashed vertical line is max value, while dark blue line is our data and light blue lines are draws from the priors"}
+```{r pripc, echo=FALSE, fig.margin=TRUE, warning=FALSE, message=FALSE, error=FALSE, fig.cap="Dashed vertical line is max value, while dark blue line is our data and light blue lines are draws from the priors"}
 pp_check(M_priors) + 
   scale_x_continuous(trans="log2") + 
   geom_vline(xintercept=121302, linetype="dashed")
@@ -233,29 +225,14 @@ pp_check(M_priors) +
 If we plot the data, $y$, (dashed line is the maximum value of 'n_bugs' in our data), together with output from our model using priors only, $y_{\mathrm{rep}}$ we see that with our priors we'll still allow extreme values on the outcome scale.
 
 # Posterior predictive checks
-Let's now conduct posterior predictive checks, i.e., see how well our model fits our data. But first we need to check the diagnostics.
+Let's now conduct posterior predictive checks, i.e., see how well our model fits our data (diagnostics have been checked, but we do not account for them here to save space; for more information please see previous [analysis](https://torkar.github.io/BDA-PL/index.html)).
 
-## Diagnostics
 
-The minimum effective sample size is above 10%. 
-
-```{r}
-table(neff_ratio(M) > 0.1)
-```
-
-$\widehat{R}$ is consistently below 1.01,
-
-```{r}
-table(rhat(M) < 1.01)
-```
-
-and plotting the four chains for each parameter that was sampled we see the characteristic "fat hairy caterpillar" plots,
+Plot the four chains for each parameter that was sampled to check for the characteristic "fat hairy caterpillar" plots,
 
 ```{r caterpillar, cache=TRUE}
 plot(M)
 ```
-
-## Fit
 
 If we plot our kernel density estimates from our model with our empirical data we get a quick visual of the fit.
 
@@ -520,7 +497,7 @@ X <- as.matrix(toplas.data[,c(-1:-8, -13)])
 
 Run the variable selection,
 
-```{r varsel, echo=TRUE, cahe=TRUE, results='hide'}
+```{r varsel, echo=TRUE, cache=TRUE, results='hide'}
 varsel_res <- negbinBvs(y = y, X = X)
 ```
 and plot the chain and output the summary:
