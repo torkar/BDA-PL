@@ -117,7 +117,7 @@ There's nothing strange with the above. We simply assume that n_bugs is distribu
 
 ### Prior predictive checks
 
-```{r, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+```{r, warning=FALSE, message=FALSE, error=FALSE, results='hide', cache=TRUE}
 m0p <- brm(n_bugs ~ 1 + (1 | language_id),
            family = negbinomial(),
     		   data=fse.data,
@@ -140,7 +140,7 @@ pp_check(m0p, nsamples = 100) +
 
 Running the above model with default priors and settings (in later examples we will set our own priors).
 
-```{r, message=FALSE, warning=FALSE, error=FALSE, message='hide'}
+```{r, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
 m0 <- brm(n_bugs ~ 1 + (1 | language_id),
           family = negbinomial(),
           data=fse.data,
@@ -289,9 +289,6 @@ m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
           prior = p, 
           refresh = 0
           )
-
-if(max(rhat(m1), na.rm = TRUE) >= 1.01)
-  knitr::knit_exit()
 ```
 
 ### Posterior predictive checks
@@ -513,18 +510,12 @@ m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_
           refresh = 0, 
           control = list(adapt_delta=0.95)
           )
-
-if(max(rhat(m2), na.rm = TRUE) >= 1.01)
-  knitr::knit_exit()
-
-if(sum(subset(np, Parameter == "divergent__")$Value) >= 0)
-  knitr::knit_exit()
 ```
 
 ### Posterior predictive checks
 
 ```{r m2-pripc, warning=FALSE, message=FALSE}
-pp_check(m2, nsamples = 100) + 
+pp_check(m2) + 
   scale_x_log10(
    breaks = scales::trans_breaks("log10", function(x) 10^x),
    labels = scales::trans_format("log10", scales::math_format(10^.x))
