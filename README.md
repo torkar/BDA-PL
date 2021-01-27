@@ -9,6 +9,6 @@ In the `docs` folder you will find the three `Rmd` scripts developed for this re
   + run the `R` commands in that file in the `R` console or, 
   + simply knit it to an `html` file in `RStudio`.
 
-If one feels confident about the analysis, then you can always read it as published by us here: [https://torkar.github.io/BDA-PL/](https://torkar.github.io/BDA-PL/). It is however worthwhile to point out that we're using dynamic Hamiltonian Monte Carlo (i.e., a stochastic algorithm). That means that each time you run the scripts you will have slightly different outputs (but not different enough to invalidate the conclusions!), which could lead to plots that are not 1:1 copies of the plots in the manuscript. 
+If one feels confident about the analysis, then you can always read it as published by us here: [https://torkar.github.io/BDA-PL/index.html](https://torkar.github.io/BDA-PL/index.html). It is however worthwhile to point out that we're using dynamic Hamiltonian Monte Carlo (i.e., a stochastic algorithm). That means that each time you run the scripts you will have slightly different outputs (but not different enough to invalidate the conclusions!), which could lead to plots that are not 1:1 copies of the plots in the manuscript. 
 
 Please contact [Richard Torkar](mailto:torkarr@chalmers.se?subject=[GitHub]%20BDA-PL) if you have any comments concerning this analysis. We would be most grateful if you find flaws so we can improve the analysis!
