@@ -11,4 +11,9 @@ In the `docs` folder you will find the three `Rmd` scripts developed for this re
 
 If one feels confident about the analysis, then you can always read it as published by us here: [https://torkar.github.io/BDA-PL/index.html](https://torkar.github.io/BDA-PL/index.html). It is however worthwhile to point out that we're using dynamic Hamiltonian Monte Carlo (i.e., a stochastic algorithm). That means that each time you run the scripts you will have slightly different outputs (but not different enough to invalidate the conclusions!), which could lead to plots that are not 1:1 copies of the plots in the manuscript. 
 
-Please contact [Richard Torkar](mailto:torkarr@chalmers.se?subject=[GitHub]%20BDA-PL) if you have any comments concerning this analysis. We would be most grateful if you find flaws so we can improve the analysis!
+In the `docs` folder you will also find an analysis using TOPLAS' data (`bda-cq-2.Rmd`) and a summary analysis (`bda-cq-summary.Rmd`). The two files can also be found published at:
+
+* https://torkar.github.io/BDA-PL/bda-cq-2.html
+* https://torkar.github.io/BDA-PL/bda-cq-summary.html
+
+Please contact [Richard Torkar](mailto:torkarr@chalmers.se?subject=[GitHub]%20BDA-PL) if you have any comments concerning this analysis. We would be most grateful if you report flaws so we can improve the analysis!

@@ -1,6 +1,8 @@
 # History files
 docs/Data/
 docs/index_files/
+docs/bda-cq-2_files/
+docs/bda-cq-summary_files/
 .DS_Store
 .Rhistory
 .Rapp.history

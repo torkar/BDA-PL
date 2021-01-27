@@ -44,6 +44,9 @@ set.seed(SEED)
 
 # run on multi-core cpus. We use the default four
 options(mc.cores=parallel::detectCores())
+
+# Set cmdstanr as backend for brms if you have it
+options(brms.backend="rstan")
 ```
 
 # Data preparation and descriptive statistics
@@ -51,7 +54,7 @@ options(mc.cores=parallel::detectCores())
 We first run the prep script by Furia loading the TOPLAS data [@TOPLAS].
 
 ```{r message=FALSE}
-source("../caf/utils.R")
+source("utils.R")
 setup.data() 
 toplas.data <- load.TOPLAS(cleanup=TRUE)
 # Only 16 languages now
@@ -162,6 +165,7 @@ m3 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
           family = negbinomial,
           data = toplas.data,
           seed = SEED,
+          iter = 4e3,
           control = list(adapt_delta=0.95),
           prior = p)
 ```
@@ -184,7 +188,7 @@ round(loo_res, digits=2) %>%
   kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
 ```
 
-Let us focus on the top-two highest ranked models, $\mathcal{M}_3$ and $\mathcal{M}_2$. $\mathcal{M}_6$ has $\textrm{elpd_diff}=$ `r round(loo_res[2,1], digits = 2)` and $\textrm{se_diff}=$ `r round(loo_res[2,2], digits = 2)`, hence with $z_{99\%}=2.576$, we have [`r round(loo_res[2,1] + c(-1,1) * loo_res[2,2] * 2.576, 2)`]. Since zero is *not* in the interval one could make a convincing claim that $\mathcal{M}_3$ is significantly better (generally we want a model to be $2$--$4$ SE away).
+Let us focus on the top-two highest ranked models, $\mathcal{M}_3$ and $\mathcal{M}_2$. $\mathcal{M}_2$ has $\textrm{elpd_diff}=$ `r round(loo_res[2,1], digits = 2)` and $\textrm{se_diff}=$ `r round(loo_res[2,2], digits = 2)`, hence with $z_{99\%}=2.576$, we have [`r round(loo_res[2,1] + c(-1,1) * loo_res[2,2] * 2.576, 2)`]. Since zero is *not* in the interval one could make a convincing claim that $\mathcal{M}_3$ is significantly better (generally we want a model to be $2$--$4$ SE away).
 
 In this case we're after the best out of sample prediction and we have strong indications that $\mathcal{M}_3$ is 'better', relatively speaking. Let us set $\mathcal{M}_3$ as our target model $\mathcal{M}$.
 
@@ -214,7 +218,9 @@ Let's sample only from priors:
 M_priors <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_s +
             (1 + devs_log + max_commit_age_log + commits_log + insertions_s | language_id) + 
             (1 | project_id),
-          family = negbinomial, data = toplas.data, prior = p, 
+          family = negbinomial, 
+          data = toplas.data, 
+          prior = p, 
           sample_prior = "only")
 ```
 
@@ -234,7 +240,7 @@ Let's now conduct posterior predictive checks, i.e., see how well our model fits
 The minimum effective sample size is above 10%. 
 
 ```{r}
-table(neff_ratio(M)>0.1)
+table(neff_ratio(M) > 0.1)
 ```
 
 $\widehat{R}$ is consistently below 1.01,

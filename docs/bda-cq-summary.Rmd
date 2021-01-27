@@ -42,10 +42,13 @@ OBJECT_DIR  <- "Objects"
 SEED = 20061215
 set.seed(20061215)
 
-source("../caf/utils.R")
+source("utils.R")
 
 # run on multi-core cpus. We use the default four
 options(mc.cores=parallel::detectCores())
+
+# Set cmdstanr as backend for brms if you have it
+options(brms.backend="rstan")
 ```
 
 # Preparation
@@ -94,12 +97,12 @@ p_fse <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log +
                    data = fse.data)
 
 # set priors for toplas and fse models
-p_toplas$prior[1] <- "normal(0,1)"
+p_toplas$prior[1] <- "normal(0,0.05)"
 p_toplas$prior[6] <- "lkj(2)"
 p_toplas$prior[8] <- "normal(0,5)"
 p_toplas$prior[9] <- "weibull(2,1)"
 
-p_fse$prior[1] <-  "normal(0,1)" 
+p_fse$prior[1] <-  "normal(0,0.05)" 
 p_fse$prior[6] <-  "lkj(2)" 
 p_fse$prior[8] <-  "normal(0,5)" 
 p_fse$prior[9] <- "weibull(2,1)"
