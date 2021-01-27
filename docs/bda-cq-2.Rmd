@@ -466,7 +466,6 @@ Let's also look at a case when there's no significant difference (Coffeescript v
 
 Once again, these are the distributions in differences we get when we reuse the data from our sample and average over them. As we saw previously, with other covariates we get other outcomes.
 
-In the [final analysis](./bda-cq-summary.html) we'll look briefly at the differences the two models display, and how much the varying effects play a role in predictions. Finally, we'll also do simulations using one of the models, because that's where the rubber hits the road and all that we've done can come to some use (except for trying to answer a question which really isn't interesting, i.e., generally speaking which language is the 'best').
 
 ```{r, include=FALSE}
 # If we want to plot all *non*-significant differences
