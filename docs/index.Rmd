@@ -1,0 +1,954 @@
+---
+title: "Bayesian data analysis of programming languages"
+subtitle: "Part I: FSE data"
+author: "R. Torkar, C. A. Furia, and R. Feldt"
+date: '`r paste("First created on 2019-12-28. Updated on", Sys.Date())`.'
+
+css: ./tables_format.css
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    df_print: paged
+bibliography: [./refs.bib]
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+start.time <- Sys.time()
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+library(ggplot2)
+library(pogit) # nb variable selection by Dvorzak and Wagner
+library(brms)
+library(rethinking)
+library(ggthemes)
+library(bayesplot)
+library(LaplacesDemon)
+library(latex2exp)
+library(patchwork)
+library(ggridges)
+
+OBJECT_DIR  <- "Objects"
+
+# For determinism
+# No need to thread safe RNGs
+options(future.rng.onMisuse="ignore")
+
+# run on multi-core CPUs. We use the default four, except when sampling from the 
+# priors
+options(mc.cores=parallel::detectCores())
+
+# Set cmdstanr as backend for brms if you haveit
+options(brms.backend="rstan")
+
+bayesplot_theme_set(theme_default(base_size = 16, base_family = "sans"))
+
+source("utils.R")
+setup.data() 
+fse.data <- load.FSE(cleanup=TRUE)
+fse.data <- by.project.language(fse.data)
+```
+
+# Data preparation and descriptive statistics
+
+We use the original data from the FSE publication [@FSE].
+
+First, manually do $\log$ transformation, 
+
+```{r}
+fse.data$commits_log <- log(fse.data$commits)
+fse.data$insertions_log <- log(fse.data$insertions)
+fse.data$max_commit_age_log <- log(fse.data$max_commit_age)
+fse.data$devs_log <- log(fse.data$devs)
+```
+
+Then, remove columns not needed and add a column that represents the 'project_id' as a numeric.
+
+```{r}
+fse.data = subset(fse.data, select = -c(domain))
+fse.data$project_id <- as.integer(fse.data$project)
+```
+
+Our data frame now looks like this, 
+
+```{r}
+glimpse(fse.data)
+```
+
+where 'n_bugs' ($\mathbb{N}^+$) is our outcome variable and 'language_id' ($\mathbb{N}^+$), 'project_id' ($\mathbb{N}^+$), 'commits_log' ($\mathbb{R}^+$), 'max_commit_age_log' ($\mathbb{R}^+$), 'devs_log' ($\mathbb{N}^+$), and 'insertions_log' ($\mathbb{R}^+$), are our potential predictors.
+
+We should check to see that we have no NAs nor zero-inflation in the outcome variable:
+
+```{r}
+table(is.na(fse.data))
+table(fse.data$n_bugs == 0)
+```
+
+Since n_bugs $\in \mathbb{N}^+$ we would expect to use a Poisson($\lambda$) likelihood (and of course we tried that first). If we, however, look at some more descriptive statistics of 'n_bugs' we see that there is a large difference between the mean and the variance,
+
+```{r}
+summary(fse.data$n_bugs)
+var(fse.data$n_bugs)
+```
+
+clearly indicating that we need to model the variance separately (each Poisson count observation should have its own rate). Hence, we'll assume that the underlying data-generation process approximately follows a negative binomial (Gamma-Poisson) distribution $\mathrm{NB}(\lambda,\phi)$.^[[Wikipedia entry for the negative binomial distribution](https://en.wikipedia.org/wiki/Negative_binomial_distribution)]
+
+# Initial model design
+It is prudent to start model design by building a small model and then move to more complex models. But what do we know so far? Well, the outcome (dependent variable), $y$, is a count starting from $0$ (albeit only with $2$ zeros). We also know that the mean is considerably smaller than the variance indicating that the underlying data generative process is a Negative-Binomial. 
+
+As predictors (independent variables) we have project numbers (unique ID for each project), the language used (language_id) and then transformed ($\log$) predictors: maximum commit age (max_commit_age), number of developers (devs), number of insertions (insertions), and number of commits (commits). 
+
+## Take 0
+
+Very often, when designing statistical models, we want to have a simple model, $\mathcal{M}_0$, to compare against. A simple model in this case would be a model where we simply estimate the grand mean, let's call it $\alpha$, and then any deviations from that mean that is due to each language $\alpha_{\mathrm{LANG}[i]}$:
+
+\begin{align}
+  \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi) \\
+  \log(\lambda_i) & = \alpha + \alpha_{\mathrm{LANG}[i]} \\
+  (\#eq:m0wop)
+\end{align}
+
+There's nothing strange with the above. We simply assume that n_bugs is distributed according to a Negative-Binomial process with the rate $\lambda$ (just like in Poisson) and a parameter $\phi$ that controls the variance (which must be positive). For the linear part in our model (Line 2) we use a $\log$ link to translate from the probability space $p \in (0,1)$.
+
+### Prior predictive checks
+
+```{r, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+m0p <- brm(n_bugs ~ 1 + (1 | language_id),
+           family = negbinomial(),
+    		   data=fse.data,
+    		   sample_prior = "only",
+    		   )
+pp_check(m0p, nsamples = 100) + scale_x_log10()
+```
+
+
+### Posterior predictive checks
+
+Running the above model with default priors and settings (in later examples we will set our own priors),^[Here and in the following examples we've set a seed in order for the results to be reproducible. During the development one should never set a seed---the stochastic elements of these algorithms are key to their reliability.]
+
+```{r, message=FALSE, warning=FALSE, error=FALSE, message='hide'}
+m0 <- brm(n_bugs ~ 1 + (1 | language_id),
+          family = negbinomial(),
+          data=fse.data,
+          refresh = 0)
+```
+
+we then conduct posterior predictive checks.
+
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+pp_check(m0, nsamples = 100) + scale_x_log10()
+```
+
+As we can see, the model struggles and we don't have a good fit. We'll add the other variables at our disposal and see if we can improve things. But first, let's have a look at the diagnostics.
+
+### Diagnostics
+
+A divergent transition indicates that the Hamiltonian trajectory has departed from the 'true' trajectory and we don't want this to happen.^[https://mc-stan.org/docs/2_23/reference-manual/divergent-transitions.html]
+
+```{r}
+np <- nuts_params(m0)
+sum(subset(np, Parameter == "divergent__")$Value)
+```
+
+The $\widehat{R}$ is the ratio of within- and between-chain variance. As a general rule of thumb, a stationary posterior probability distribution is indicated by $\widehat{R} < 1.01$, i.e., it should approach $1$ when $N \rightarrow \infty$. We see that the diagnostics here is just below $1.01$.
+
+```{r}
+# rm NAs since they have not been estimated
+max(rhat(m0), na.rm = TRUE)
+```
+
+Next, we should check the effective sample size (ESS) for each parameter we estimated. Generally speaking, we always want $\mathrm{ESS} \gtrapprox 0.1$, i.e., $10$% of the total sample size at a minimum, for each parameter we estimate (or at least it should be in the hundreds in absolute values).
+
+```{r}
+# rm NAs since they have not been estimated
+min(neff_ratio(m0), na.rm = TRUE)
+```
+
+Finally, we visually inspect trace plots to see that they look like hairy caterpillars (i.e., that they mix well),
+
+```{r}
+mcmc_trace(m0) + 
+  theme(text = element_text(size=6))
+```
+
+## Take I
+
+In the original study the authors used four population-level effects: devs_log, max_commit_age_log, commits_log, and insertions_log. If we would follow a principled Bayesian approach (and for that matter a frequentist approach) many would claim that some type of variable selection should take place. Later down below, Sect. \@ref(sect:nb-varsel), we will show how this can be done, but we do not include it here, since our intention is to follow the original study.
+
+Our next model, $\mathcal{M}_1$, is a model that estimates a grand mean, $\alpha$, four population-level effects ($\beta_1,\ldots,\beta_4$), and then employ varying intercepts according to language.
+
+In math speak this is what it looks like without the priors,
+
+\begin{align}
+  \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi)\\
+  \log(\lambda_i) & = \alpha + \beta_1 \mathrm{devs\_log}_i + \beta_2 \mathrm{max\_commit\_age\_log}_i\\ 
+                  & + \beta_3 \mathrm{commits\_log}_i + \beta_4 \mathrm{insertions\_log}_i\\
+                  & + \alpha_{\mathrm{LANG}[i]} \\
+  (\#eq:m1wop)
+\end{align}
+
+
+### Prior predictive checks
+
+First, we'll make sure to check what priors such a model expects us to set,
+
+```{r}
+(p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + 
+                  insertions_log + (1 | language_id), 
+                data = fse.data, family = negbinomial))
+```
+
+For our $\beta$s we have unsuitable uniform priors, $\mathrm{Uniform}(-\infty,\infty)$. For the intercept, $\alpha$, a Student's $t$ distribution with $\nu=3$, and the same for the standard deviation, $\sigma$, used for the varying intercepts (however, in this case it's automatically truncated with a lower bound of $0$ since $\sigma$ cannot be negative). Finally, there is a default prior for the shape, $\phi$, i.e., $\gamma(0.01,0.01)$.
+
+It might be prudent to set our own priors to see, using prior predictive checks, how the prior probability distribution looks like when we sample only from the priors.^[In this replication package we follow recommendations on priors. For an introduction please see (here)[https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations].] We'll set $\mathrm{Normal}(0,5)$ for our intercept, $\mathrm{Weibull}(2,1)$ for our dispersion $\sigma$, and $\mathrm{Normal}(0,0.5$ for each of our four $\beta$s. In math notation we now have this model,
+
+\begin{align}
+  \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi) &\\
+   \log(\lambda_i) & = \alpha + \beta_1 \mathrm{devs\_log}_i + \beta_2 \mathrm{max\_commit\_age\_log}_i &\\ 
+                  & + \beta_3 \mathrm{commits\_log}_i + \beta_4 \mathrm{insertions\_log}_i &\\
+                  & + \alpha_{\mathrm{LANG}[i]} &\\
+  \alpha & \sim \textrm{Normal}(0,5)\\
+  \beta_1,\ldots,\beta_4 & \sim \textrm{Normal}(0,0.5) &\\
+  \alpha_{\mathrm{LANG}} & \sim \mathrm{Weibull}(2,1) & & \textrm{for LANG}=1,..,17\\
+  \phi & \sim \textrm{Gamma}(0.01,0.01) &
+  (\#eq:m1)
+\end{align}
+
+The $\mathrm{Gamma}$ prior on $\phi$ allows only positive real numbers, as does the $\mathrm{Weibull}(2,1)$ for our varying intercepts. Additionally, having $\mathrm{Normal}(0,1)$ on our $\beta$s might seem tight, but the additive terms imply a variance of $4^2=16$. Let's see what the prior predictive checks will show. 
+
+Sample the model using no data.
+
+```{r m0-1, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+p$prior[1] <- "normal(0,0.5)"
+p$prior[6] <- "normal(0,5)"
+p$prior[7] <- "weibull(2,1)"
+
+m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
+                 insertions_log + (1 | language_id),
+          family = negbinomial(), prior = p, data=fse.data, 
+          chains = 1, iter = 1000, 
+          sample_prior = "only", refresh = 0)
+```
+
+We used only one chain and we sampled for only $1000$ iterations.^[We used Hamiltonian Monte Carlo with the No U-Turn Sampler (NUTS), which `brms` uses thanks to the functionality from the `Stan` package.] Half of the iterations are thrown away (warm-up), which leads us to having $500$ samples in our prior probability distribution.^[In the remaining executions we'll refrain from showing the output, but we have made sure that no warnings exist when sampling (simply running this `Rmd` file yourself will allow you to check this).]
+
+Let's now plot $100$ samples, $y_{\mathrm{rep}}$, from our prior probability distribution, and compare them to our empirical data, $y$.
+
+```{r m1-pripc, warning=FALSE, message=FALSE}
+pp_check(m1, nsamples = 100) + scale_x_log10()
+```
+
+In the plot above we've $\log$ transformed the $x$-axis so we can see what's actually happening. In short, the priors are all over the place (and a number of them are $\infty$). 
+
+Let's sample the model with our empirical data by simply removing the statement `sample_prior = "only"` and run with the default number of chains ($4$) and iterations per chain ($2000$).
+
+```{r m0-2, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
+                 insertions_log + (1 | language_id), 
+          data = fse.data, family = negbinomial,
+          prior = p, refresh = 0)
+```
+
+### Posterior predictive checks
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+pp_check(m1) + scale_x_log10()
+```
+
+### Diagnostics
+
+Let's check a number of diagnostic: posterior predictive checks, divergences, $\widehat{R}$, effective sample size (ESS), and trace plots.^[In the remainder of the replication package we will not mention this anymore, but this should always be done before we put any trust in a model.]
+
+Divergent transitions:
+
+```{r}
+np <- nuts_params(m1)
+sum(subset(np, Parameter == "divergent__")$Value)
+```
+
+$\widehat{R}$ ratio:
+
+```{r}
+max(rhat(m1), na.rm = TRUE)
+```
+
+Effective sample size (ESS):
+
+```{r}
+min(neff_ratio(m1), na.rm = TRUE)
+```
+
+Traceplots of all parameters:
+
+```{r}
+mcmc_trace(m1) + 
+  theme(text = element_text(size=6))
+```
+
+Once the model has passed all diagnostics we can start putting *some* trust in it. Let's see what the model has estimated!
+
+
+### The fallacy of placing confidence in point estimates
+
+```{r}
+summary(m1)
+```
+
+Above we see the estimated $\sigma$ for the group-level effects, i.e., the $17$ languages which we used as varying intercepts. Then we see our $\alpha$ (Intercept), which is a population-level effect (fixed effect), just like our four $\beta$ estimates. Finally, we have the shape estimated. Except for the shape, all other parameters must be transformed using the exponential, since we employed a $\log$ link function in our model to translate to the probability space.
+
+The shape parameter, $\phi$, is an indication of the level of aggregation/clustering among our languages, i.e., when it goes towards infinity it corresponds to an absence of aggregation among our languages.
+
+In order for us to get some estimates on the different languages we need to look into our varying intercepts, i.e., the languages. However, simply looking at point estimates to check if they are significant or not, is quite simply not sane when we have a posterior probability distribution.
+
+```{r}
+ranef(m1)
+```
+
+As we can see above, quite many of our $17$ languages are 'significant.' But, what does it mean in practice? Well, we have a posterior probability distribution we can ask questions to. 
+
+Assume that we use the mean for the four predictors we've set as population-level effects, i.e., devs, max_commit_age, insertions, and commits, then we simply check what the difference is between two of the languages, let's take the first two, which are C and C#.
+
+```{r}
+nd <- data.frame(
+  language_id = seq(1:2),
+  insertions_log = log(mean(fse.data$insertions)),
+  commits_log = log(mean(fse.data$commits)),
+  max_commit_age_log = log(mean(fse.data$max_commit_age)),
+  devs_log = log(mean(fse.data$devs))
+)
+
+pp <- posterior_predict(m1, newdata = nd)
+summary(pp[,1]) # C
+summary(pp[,2]) # C#
+```
+
+There's clearly a difference in number of bugs between the C (upper) and the C# (lower) summaries. A difference we will find among many languages and which we'll explore later.
+
+## Take II
+
+In the previous section we created a model, $\mathcal{M}_1$, that we can continue to build on. The logical next step is to keep our varying intercepts, but add the concept of varying slopes. In short, not only will each language's intercept be modeled separately (i.e., where it crosses the $y$-axis), we will also model each language's slope separately (i.e., the ratio of the change along the $y$-axis to the change along the $x$-axis). Mathematically speaking we thus have,
+
+\begin{align}
+  \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi)\\
+  \log(\lambda_i) & = \alpha_{\mathrm{LANG}[i]} + \beta_{\mathrm{LANG}[i]} \mathrm{devs\_log}_i + \gamma_{\mathrm{LANG}[i]} \mathrm{max\_commit\_age\_log}_i \\
+                  & + \delta_{\mathrm{LANG}[i]} \mathrm{commits\_log}_i + \epsilon_{\mathrm{LANG}[i]} \mathrm{insertions\_log}_i + \zeta_{\mathrm{PROJ}[i]}\\
+
+\begin{bmatrix}
+\alpha_{\mathrm{LANG}[i]} \\
+\beta_{\mathrm{LANG}[i]} \\
+\gamma_{\mathrm{LANG}[i]} \\
+\delta_{\mathrm{LANG}[i]} \\
+\epsilon_{\mathrm{LANG}[i]}
+\end{bmatrix}
+& \sim \mathrm{MVNormal} 
+
+\left( 
+\begin{bmatrix}
+\alpha\\
+\beta\\
+\gamma\\
+\delta\\
+\epsilon
+\end{bmatrix}
+, \mathbf{S}
+\right)\\
+
+\mathbf{S} & = \left( 
+\begin{matrix}
+\sigma_\alpha & 0 & 0 & 0 & 0\\
+0 & \sigma_\beta & 0 & 0 & 0 \\
+0 & 0 & \sigma_\gamma & 0 & 0 \\
+0 & 0 & 0 & \sigma_\delta & 0 \\
+0 & 0 & 0 & 0 & \sigma_\epsilon
+\end{matrix}
+\right)
+
+\mathbf{R}
+
+\left(
+\begin{matrix}
+\sigma_\alpha & 0 & 0 & 0 & 0\\
+0 & \sigma_\beta & 0 & 0 & 0 \\
+0 & 0 & \sigma_\gamma & 0 & 0 \\
+0 & 0 & 0 & \sigma_\delta & 0 \\
+0 & 0 & 0 & 0 & \sigma_\epsilon
+\end{matrix}
+\right)
+\\
+
+  \alpha & \sim \textrm{Normal}(0,5)\\
+  \beta,\ldots,\epsilon & \sim \mathrm{Normal}(0,0.5)\\
+  \sigma_\alpha,\ldots,\sigma_\epsilon & \sim \mathrm{Weibull}(2,1)\\
+  \mathbf{R} & \sim \mathrm{LKJ}(2)\\
+  \zeta_{\mathrm{PROJ}[i]} & \sim \mathrm{Weibull}(2,1) & \textrm{for PROJ} = 1,..,729\\
+  \phi & \sim \textrm{Gamma}(0.01,0.01)
+  (\#eq:m2)
+\end{align}
+
+There are a few things that makes this model look different compared to Equation \@ref(eq:m1). The first thing is that for each population level effect we set a varying slopes (Lines $2$--$3$). Then, on Lines $4$--$5$ we model the slopes using a multivariate Normal (we want to model the correlation between slopes). We also set a Lewandowski-Kurowicka-Joe (LKJ) prior to model the covariance matrix of the multivariate normal distribution (Line $9$). Finally, as seen at the end of Line $3$, we have added a new varying intercept according to project ID (and on Line $10$ we set the prior).
+
+The idea with the latter part is that we believe projects could learn from each other by employing partial pooling. Some projects have several rows of data, while some only a few. If the projects having more data informs projects with less data we might learn more, but still avoid overfitting.
+
+Before we continue with our prior predictive checks it might be worthwhile to see what an $\mathrm{LKJ}()$ prior implies. This prior is used for covariance matrices exclusively. The difference between $\mathrm{LKJ}(1)$ and $\mathrm{LKJ}(2)$ is that in the former case it implies a virtually flat prior, while in the latter case we claim that we are skeptical of extreme correlations. In our case, we have no better information than that.
+
+```{r lkj, fig.cap="Correlation priors LKJ(1) (black) and LKJ(2) (blue)", echo=FALSE}
+lkj1 <- rlkjcorr(100000, K = 2, eta = 1)
+lkj2 <- rlkjcorr(100000, K = 2, eta = 2)
+
+dens(lkj2[,1,2], col = "blue",
+     xlab = "",
+     ylab = "")
+dens(lkj1[,1,2], add = TRUE)
+```
+
+### Prior predictive checks
+
+As usual, we'll first check the default priors and then set our priors as stipulated in the previous section.
+
+```{r}
+(p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_log +
+              (1 + devs_log + max_commit_age_log + commits_log + insertions_log | language_id) +
+              (1 | project_id),
+          family = negbinomial,
+          data = fse.data))
+p$prior[1] <- "normal(0,0.5)"
+p$prior[6] <- "lkj(2)"
+p$prior[8] <- "normal(0,5)"
+p$prior[9] <- "weibull(2,1)"
+```
+
+Next we sample our model using only the priors and conduct prior predictive checks.
+
+```{r m3-1, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_log +
+            (1 + devs_log + max_commit_age_log + commits_log + insertions_log | language_id) +
+            (1 | project_id),
+          family = negbinomial(), prior = p, 
+          data=fse.data, chains = 1, iter = 1000, 
+          sample_prior = "only", refresh = 0)
+```
+
+```{r m2-post, warning=FALSE, message=FALSE}
+pp_check(m2, nsamples = 100) + scale_x_log10()
+```
+
+So, looks good. The priors are all over the place and additionally allow quite absurd values. Let's now sample the model with data.
+
+```{r m3-2, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_log +
+            (1 + devs_log + max_commit_age_log + commits_log + insertions_log | language_id) +
+            (1 | project_id),
+          family = negbinomial(), 
+          prior = p, 
+          data=fse.data, 
+          refresh = 0, 
+          control = list(adapt_delta=0.95))
+```
+
+### Posterior predictive checks
+
+```{r m2-pripc, warning=FALSE, message=FALSE}
+pp_check(m2, nsamples = 100) + scale_x_log10()
+```
+
+
+### Diagnostics
+
+Divergent transitions:
+
+```{r}
+np <- nuts_params(m2)
+sum(subset(np, Parameter == "divergent__")$Value)
+```
+
+$\widehat{R}$ ratio:
+
+```{r}
+max(rhat(m2), na.rm = TRUE)
+```
+
+Effective sample size (ESS):
+
+```{r}
+min(neff_ratio(m2), na.rm = TRUE)
+```
+
+Finally, we have also visually inspected the trace plots, but since this model estimates more than $1787$ parameters we choose not to show it here.
+
+In the end, the model passed all diagnostics, but before we continue analyzing the output of this, more complex model, we might as well see which of our three models, $\{\mathcal{M}_0, \mathcal{M}_1, \mathcal{M}_2\}$, has the best out of sample prediction capabilities.
+
+# Model comparison
+
+In Bayesian statistics it has been quite common to compare models' relative out of sample prediction capabilities. This has often been done by using information theoretical concepts like, e.g., AIC, BIC, DIC, and WAIC. Up until recently, many would argue that WAIC (Widely Applicable Information Criterion, or Watanabe-Akaike Information Criterion) was state of the art concerning model comparison. However, by standing on the shoulder of giants, and all that, things have changed.
+
+Using Pareto-smoothed importance sampling (PSIS), together with leave-one-out cross validation (LOO), we can do all the things that one could do with WAIC, but with the added benefit of having diagnostics available that tells us when things go wrong [@vehtariGG17loo]. 
+
+First, we add the information criteria, i.e., LOO, to the objects.
+
+```{r add_ic, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+m0 <- add_criterion(m0, criterion = "loo")
+m1 <- add_criterion(m1, criterion = "loo")
+m2 <- add_criterion(m2, criterion = "loo")
+```
+
+Next, we calculate the relative out of sample prediction capabilities of the models.
+```{r loo_compare}
+(lc <- loo(m0,m1,m2, moment_match = TRUE))
+```
+
+We see that there's some diagnostics showing that we have Pareto $k>0.7$ in $\mathcal{M}_0$ and $\mathcal{M}_2$. In this particular case, running $10$-fold cross validation, one will see that the estimations of the LOO information criteria is stable, i.e., the criteria is precisely estimated using moment matching correction to the importance sampling for the problematic observations [@aki19momentmatch].
+
+At the bottom of the output, we see that $\mathcal{M}_2$ seems to take the lead (placed on the first row). If we assume $z_{99\%} = 2.58$, then one clearly sees that it's considerably better, i.e., $\mathrm{CI}_{95\%}$[`r round(lc$diffs[2,1] + c(-1,1) * 2.58 * lc$diff[2,2], 1)`] does not cross zero (after all it's more than $7$ SE away from $\mathcal{M}_1$. In short, $\mathcal{M}_2$ is very likely the best model we have in our arsenal at the moment, hence, we declare it to be $\mathcal{M}$,
+
+```{r}
+M <- m2
+```
+
+# Inferences on $\mathcal{M}$
+
+A violin plot summarizes the fit for each language ($y$ is our empirical data, and $y_{\mathrm{rep}}$ are draws from the posterior probability distribution):
+
+```{r violin, message=FALSE, warning=FALSE, cache=TRUE}
+pp_check(M, type = "violin_grouped", group = "language_id", y_draw="points") +
+  scale_y_continuous(trans = "log2") +
+  scale_x_discrete(labels=levels(fse.data$language)) +
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+We can also check the conditional effects on our population-level parameters.
+                                                    
+```{r effects, echo=FALSE}
+# include no random effects
+conditional_effects(M, ask=FALSE)
+
+# below for a plot as in the manuscript
+# p <- conditional_effects(M, ask=FALSE, effects = "insertions_log")
+# plot(p, plot=F)[[1]] + theme_tufte(base_size = 22) + xlab("log(insertions)") + ylab("Number of bugs") 
+```
+
+For the first three effects we clearly see something is happening when moving along the $x$-axis. With the last effect, 'insertions', it is not as clear; mainly due to the 95% credible interval that dramatically increases.
+
+What are our population-level estimates? We refrain from printing the group effects (random effects) since it will take up a lot of space but they can be found in the appendix.^[For an excellent introduction to these terms please see this [post](https://lindeloev.net/lets-rename-fixed-to-population-level-and-random-to-varying/).]
+
+```{r}
+fixef(M)
+```
+
+In short, three of the $\beta$ estimates are significant on 95%, but 'insertions' is not.
+
+Let's next plot our group effects for 'language' (varying according to our slopes 'devs', 'max_commit_age', 'commits', and 'insertions'). The inner interval is set to 50% of the probability mass (light blue), while the outer interval is set to 90%. 
+
+```{r mcmc_areas, echo=FALSE, warning=FALSE, message=FALSE}
+
+mcmc_areas(M, regex_pars = "devs_log]") +
+  scale_y_discrete(labels=levels(fse.data$language)) +
+  ggtitle("devs")
+
+mcmc_areas(M, regex_pars = "max_commit_age_log]") +
+  scale_y_discrete(labels=levels(fse.data$language)) +
+  ggtitle("max commit age")
+
+mcmc_areas(M, regex_pars = "commits_log]") +
+  scale_y_discrete(labels=levels(fse.data$language)) +
+  ggtitle("commits")
+
+mcmc_areas(M, regex_pars = "insertions_log]") +
+  scale_y_discrete(labels=levels(fse.data$language)) +
+  ggtitle("insertions")
+```
+
+Generally speaking, the slope 'insertions' shows more variance, as does, but slightly harder to see, 'commits' (they both have $\sigma=0.05$). It's not visible in the plots (but when we look at the `summary()`), the strongest correlation is that 'commits' is negatively correlated with 'insertions' ($r=0.46$). Once again we see 'insertions' popping up, and in the above plot Typescript looks suspicious, i.e., something seems to be a bit fishy.
+
+## Projects' variability
+
+By plotting our slopes for, e.g.,'insertions', we could see some suspect things. The variability is larger compared to other slopes, but also that Typescript sticks out. This we all got by designing a model that implemented varying intercepts (according to language) with varying slopes (according to the population-level effects insertions, commits, max commit age, and number of developers). However, we do have another varying intercept, i.e., the project id.
+
+Recall that in $\mathcal{M}_1$ we did not have project id as a varying intercept, and comparing that model to our final model, we saw that $\mathcal{M}_1$ simply could not compete in out of sample prediction. In short, adding project id *clearly* made a large difference.
+
+Examining project id we see that there are `r length(unique(fse.data$project_id))` projects. Let's see the distribution of rows for each project, i.e., how many rows do we have for each project?
+
+```{r}
+hist(table(fse.data$project_id)+0.001, main="", xlab="Number of rows", xaxt="n", 
+     labels = TRUE, ylim = 500)
+axis(1, at=seq(1.25,7.25), labels = seq(1:7))
+```
+
+A clear majority of the projects only have one row. How peculiar, Hamiltonian Monte Carlo (HMC) still cuts through this like a warm knife through butter. Let's plot the prior probability distribution, $\mathrm{Weibull}(2,1)$, and compare it with our posterior.
+
+```{r post_pri_proj, echo=FALSE, warning=FALSE, message=FALSE}
+post <- posterior_samples(M)
+tibble(x = seq(from = 0, to = 3, by = .1)) %>% 
+  ggplot() +
+  # the prior
+  geom_ribbon(aes(x = x, ymin = 0, ymax = dweibull(x, shape = 2, scale = 1)),
+              fill = "black", alpha = 8/10) +
+  # the posterior
+  geom_density(data = post,
+               aes(x = sd_project_id__Intercept), 
+               fill = "black", alpha = 2/5, size = 0) +
+  xlab(expression(sigma)) + theme_tufte(base_size=22) + 
+  annotate("text", x = 1.0, y = 2, label = "Weibull(2,1)", size=6) + 
+  annotate("text", x = 0.5, y = 20, label = "Posterior", size=6)
+```
+
+There's no question that the data has swamped our prior. One clearly sees our wide prior (dark) compared to the 'spike', which is our posterior.
+
+In fact, what we're seeing is the effect of multi-level modeling taking place. In order for us to avoid overfitting, projects with more data will inform projects with little data. It's a remarkable fact that HMC can sample this so nicely in the end. Making use of the project id allowed us to improve the out of sample predictions considerably!
+
+Let's plot a **random** sample of $25$ projects to get a feeling for the variability among projects (this plot will of course look different every time we plot it). We'll plot the $x$-axis using logarithm base $10$.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+post <- data.frame(posterior_predict(M)) #predictions
+# add +1 to eveything so we can do log10 (it won't matter much anyways)
+post <- post + 1
+# sample 25 random projects and make long format
+post %>% 
+  sample(10) %>%
+  mcmc_areas_ridges() + 
+  theme_tufte(base_size = 18) + 
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) + 
+  xlab("Number of bugs") + scale_x_continuous(trans="log10")
+
+# In case one wants to compare deviations from 0 (intercept)
+# # draw samples from the posterior
+# post <- posterior_samples(M)
+# 
+# post %>% 
+#     select(starts_with("r_project_id")) %>%
+#     sample(size = 25) %>% 
+#     mcmc_areas_ridges() +
+#   theme_tufte(base_size=18) +
+#   theme(axis.title.y=element_blank(),
+#         axis.text.y=element_blank(),
+#         axis.ticks.y=element_blank())
+```
+
+So, projects contain a considerable within and between variability, which is most likely why the model makes such a jump in out of sample predictions when we add projects as a predictor. More than this we don't need to know, after all, what is a significant project? We'd rather compare the variability between categories of languages.
+
+## Predictions
+As a first step, we can now set our predictors to the original median values and see how the languages differ.
+
+Let's query our posterior probability distribution about the median bugs for each language (all things being equal).
+
+```{r, echo=FALSE}
+# Set project_id = NA "all dummy variables are zero"
+nd_median <- with(fse.data, 
+                  expand.grid(project_id = NA, 
+                              language_id = seq(1:17),
+                              devs_log = median(fse.data$devs_log),
+                              max_commit_age_log = median(fse.data$max_commit_age_log),
+                              commits_log = median(fse.data$commits_log),
+                              insertions_log = median(fse.data$insertions_log)
+                              )
+                  )
+
+# do posterior predictions
+PPC_median <- posterior_predict(M, newdata = nd_median)
+
+# set sane names on columns
+colnames(PPC_median) <- levels(fse.data$language)
+
+# what is the median predicted value of 'n_bugs' for each language
+# given 'nd_median' data frame above?
+df <- data.frame(n_bugs = numeric(17), lang = character(17),
+                 stringsAsFactors = FALSE)
+
+for(i in seq(1:17)) {
+  df$n_bugs[i] <- median(PPC_median[,i])
+  df$lang[i] <- colnames(PPC_median)[i]
+}
+
+df %>%
+  arrange(-n_bugs) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", full_width = T,
+                position = "center")
+```
+
+The table only provides us with a rough overview of language differences when setting continuous covariates to their medians. We should try using our covariates at different levels and plot the outcome with uncertainty to see how it varies depending on the level.
+
+The plots below shows posterior predictions of the numbder of bugs, when our covariates (predictors) are set to their empirical max, median, and minimum levels (note that the $x$-axis uses the logarithm base $10$!) The max level clearly shows uncertainty, but that uncertainty is even more pronounced for the other two levels.
+
+```{r, echo=FALSE}
+# nd_median and PPC_median we have above already. Let's create
+# data frames where we also set covariates at their min and max values
+nd_min <- data.frame(language_id=seq(1:17),
+                     project_id = NA,
+                     devs_log=min(fse.data$devs_log),
+                     max_commit_age_log=min(fse.data$max_commit_age_log),
+                     commits_log=min(fse.data$commits_log),
+                     insertions_log=min(fse.data$insertions_log))
+
+nd_max <- data.frame(language_id=seq(1:17),
+                     devs_log=max(fse.data$devs_log),
+                     project_id = NA,
+                     max_commit_age_log=max(fse.data$max_commit_age_log),
+                     commits_log=max(fse.data$commits_log),
+                     insertions_log=max(fse.data$insertions_log))
+
+# posterior predictions
+PPC_min <- posterior_predict(M, newdata = nd_min)
+PPC_max <- posterior_predict(M, newdata = nd_max)
+
+colnames(PPC_min) <- levels(fse.data$language)
+colnames(PPC_max) <- levels(fse.data$language)
+
+PPC_max <- as.data.frame(PPC_max) %>%
+  gather(lang, bugs)
+PPC_median <- as.data.frame(PPC_median) %>%
+  gather(lang, bugs)
+PPC_min <- as.data.frame(PPC_min) %>%
+  gather(lang, bugs)
+```
+
+What is clearly evident is that the order (languages are plotted in a descending order from left to right) changes depending on covariates' settings. So there's no black or white here, i.e., depending on the covariates' values different languages perform differently.
+
+```{r violin-outcome, echo=FALSE, fig.fullwidth=TRUE, fig.width=8, fig.height=8}
+PPC_max$bugs1 <- PPC_max$bugs+1 # add 1 to avoid NAs when doing log10()
+PPC_median$bugs1 <- PPC_median$bugs+1
+PPC_min$bugs1 <- PPC_min$bugs+1
+
+# Move to GitHub
+# horizontal axis for PostPC add ALSO more ticks
+# fig 8 log10 x-scale 
+
+p1 <- ggplot(PPC_max, aes(x=reorder(lang, -bugs1), y=bugs1)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") + 
+  ggtitle("Max (developers = 1383, max commit age = 16090, \ncommits = 305361, insertions = 263641)") + 
+  scale_y_continuous(breaks = c(1e4,3e4,1e5,3e5,1e6), 
+                     minor_breaks = NULL,
+                     trans="log10") + 
+  geom_hline(yintercept=median(PPC_max$bugs1), size=0.2)
+
+p2 <- ggplot(PPC_median, aes(x=reorder(lang, -bugs1), y=bugs1)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") + 
+  ggtitle("Median (developers = 15, max commit age = 1029, \ncommits = 248, insertions = 263641)") + 
+  scale_y_continuous(breaks=c(10,20,40,80,160,320), 
+                     minor_breaks = NULL,
+                     trans="log10") + geom_hline(yintercept=median(PPC_median$bugs1), size=0.2)
+
+p3 <- ggplot(PPC_min, aes(x=reorder(lang, -bugs1), y=bugs1)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") + 
+  ggtitle("Min (developers = 1, max commit age = 12, commits = 28, insertions = 263641)")+ 
+  scale_y_continuous(minor_breaks = NULL, 
+                     trans="log10") + 
+  geom_hline(yintercept=median(PPC_min$bugs1), size=0.2)
+
+p1/p2/p3
+```
+
+Which of the above plots tells the truth? Well, the truth is connected to your reality, i.e., practical significance. Hence, it varies a lot depending on contextual factors. In our case these factors are represented by the covariates' levels/settings.
+
+### Setting our own reality
+
+Let's assume that we have a project with $30$ developers where we assume that we'll have a project that will run for two years using Ruby and Python. Over these two years we expect on average $2$ commits per day (over 365 days) $2*365$, max commit age of $30*2*365$, and insertions ending up around $30*10*2*365$
+
+```{r violin-outcome2 }
+newdata <- data.frame(language_id=c(14,15), # Python and Ruby
+                      devs_log=log(30),
+                      project_id = NA,
+                      max_commit_age_log=log(2*365),
+                      commits_log=log(30*2*365),
+                      insertions_log=log(30*10*2*365))
+
+PPC_new <- posterior_predict(M, newdata=newdata)
+names <- c("Python", "Ruby")
+colnames(PPC_new) <- names
+PPC_new <- as.data.frame(PPC_new) %>%
+                  gather(lang, bugs)
+
+ggplot(PPC_new, aes(x=lang, y=bugs)) +
+  geom_violin() +
+  xlab("") +
+  ggtitle("Custom (developers = 30, max commit age = 2*365, \ncommits = 30*2*365, insertions = 30*10*2*365)")
+```
+
+All things being equal, you should consider using Ruby in your project. Ruby has a shorter tail (i.e., has a maximum number of bugs lower than Python). Additionally, the bulk of the probability mass is lower than for Python.
+
+But do we have a 'statistically significant difference' between these two languages, or for that matter among any of the languages?
+
+## Effect sizes
+
+We'll use covariate values from the empirical data, $y$, as input, with the idea that the sample is representative of the population. This is really not needed, i.e., we can set the values to basically whatever we want, but this way it'll be easier to conduct inferences for all combinations of languages, and since we have a posterior probability distribution we usually don't have to worry about correcting for multiple comparisons. 
+
+If we use a credible level of 0.999 (i.e., 0.1%) we have 116 pairwise differences that are of interest. Then, for each contrast we calculate the 95% Highest Posterior Density Interval (HPDI).^[[Credible intervals](https://en.wikipedia.org/wiki/Credible_interval)] If the HPDI is strictly positive or negative (i.e., does not cover 0) then we have a significant difference on the 95% HPDI concerning the *difference* of two languages (obviously a more conservative approach would be to see that the languages differ with 2--4 $\sigma$, to be considered different enough).
+
+```{r contrasts, include=FALSE}
+
+rMeans <- NULL
+for(i in seq(1:17)){ # PPC for each language and store it in rMeans
+  ppc <- posterior_predict(M, newdata = fse.data[fse.data$language_id == i, ],
+                           re_formula = NA)
+  rMeans[[i]] <- cbind(rowMeans(ppc))
+}
+
+contrasts <- NULL
+# All pairwise combinations of languages
+c <- combn(seq(1:17), 2)
+# Also as factors for printing
+l <- combn(levels(fse.data$language), 2)
+
+for(i in 1:ncol(c)) # loop through 136 combinations
+  contrasts[[i]] <- rMeans[[c[1,i]]] - rMeans[[c[2,i]]] # calculate contrasts
+
+j = 0
+for(i in 1:length(contrasts)) { # for each contrast
+  hpdi <- HPDI(contrasts[[i]], prob = 0.999) # calculate HPDI
+  s <- sign(hpdi) # check if + or -
+  
+  if((s[1] == 1 && s[2] == 1))
+    j <- j + 1
+  
+  if((s[1] == -1 && s[2] == -1))
+    j <- j + 1
+}
+print(j)
+```
+
+First, we calculate the contrast between each language (136 combinations when we have 17 languages). Then it's very easy to check the distribution of the difference between any two languages and in that way also investigate effect sizes (there's no need to look at point estimates since we have a probability distribution of the *differences* between two languages, with 95% highest posterior density interval).
+
+```{r diff, echo=FALSE}
+plot(NULL, xlim = c(-1000, 10000), ylim = c(0,0.0035), xlab = "Number of bugs", 
+     ylab="Density", axes=F, main="C# vs. C")
+axis(1, tick=T)
+axis(2, tick=T)
+dens(contrasts[[1]], add = T)
+```
+
+If we plot the difference between C# and C (above) we see that it's positive, indicating that C almost always performs worse than C# (if it would have been negative then C# would've been worse). 
+
+Let's also look (below) at cases where there is no significant difference (Coffeescript vs. Go)
+
+```{r diff2, echo=FALSE}
+plot(NULL, xlim = c(-100, 70), ylim = c(0,0.04), xlab = "Number of bugs", ylab="Density", axes=F, main="Coffeescript vs. Go")
+axis(1, tick=T)
+axis(2, tick=T)
+dens(contrasts[[60]], add=T)
+```
+
+We see that it crosses 0 on the $x$-axis, and sometimes Go actually is worse on average.
+
+How often is sometimes?
+  
+```{r es}
+es <- data.frame(table(sign(contrasts[[60]])))
+(foo <- 1 - (es[1,2] /(es[1,2] + es[2,2])))
+```
+
+Well, in this case `r round(foo * 100, 2)`% of the time.
+
+Finally, here's an example when there is a clear difference in the other direction (Objective-C vs. Ruby), i.e., when the values are clearly negative and, so, Objective-C is clearly worse.
+
+
+```{r diff3, echo=FALSE}
+plot(NULL, xlim = c(-1200, 0), ylim = c(0,0.007), xlab = "Number of bugs", ylab="Density", axes=F, main="Objective-C vs. Ruby")
+axis(1, tick=T)
+axis(2, tick=T)
+dens(contrasts[[119]], add=T)
+```
+
+Once again, these are the distributions in *differences* that we get when we reuse the covariate statistics from our sample and average over them. As we saw previously, with other covariates we get other outcomes. Rarely does a statistical analysis provide us with a dichotomous answer, i.e., the 'truth' is seldom that simple.
+
+# Bayesian variable selection for $\textrm{NB}(\lambda,\phi)${#sect:nb-varsel}
+
+We did not include this step in the original manuscript since one of the purposes with the study was to also use the same independent variables (i.e., predictors) as in the previously published work. However, we would argue that this step should be used if one wants to gain robust out of sample predictions.
+
+Here we'll conduct variable selection for negative-binomial (NB). Unfortunately, the Stan team does not yet (`r format(Sys.Date(), "%B %Y")`) support variable selection for the NB.^[[Projection predictive variable selection](https://github.com/stan-dev/projpred)] However, there's a package that uses MCMC for variable selection of NB distributions by @dvorzakW16vs.
+
+Set our outcome variable:
+  
+```{r}
+y <- fse.data$n_bugs
+```
+
+Select response variables and store them as a matrix. We remove 'n_bugs' (our $y$), original variables not transformed, and the factor variables 'language' and 'project' (since they are indicators we'll use later as varying intercepts).
+
+```{r}
+X <- as.matrix(fse.data[,c(-1:-8, -13)])
+```
+
+Run the variable selection,
+
+```{r varsel, echo=TRUE, results='hide'}
+varsel_res <- negbinBvs(y = y, X = X)
+```
+
+and plot the chain and output the summary:
+
+```{r varsel_plot, fig.align="center"}
+plot(varsel_res, burnin = FALSE, thin = FALSE)
+summary(varsel_res)
+```
+
+$\beta_2$ $\mathrm{P}(.= 1)$ is $\approx 0.5$ so we should think carefully about including it, i.e., the variable 'insertions'. We also have fairly strong argument for 'max_commit_age' being a bit shaky ($\beta_3$ in the above case) by looking at the lower 95% highest posterior density (95%-HPD[l]). For the sake of completeness, and to follow the previous studies, we included them anyway (in our analysis above). But, if we would follow a principled Bayesian workflow, then many would argue that we should not use the predictor 'insertions'. It's also clear, by looking at our analysis above, that 'insertions' is not significant and has questionable contributions to the prediction capabilities of the model (i.e., it contributes with uncertainty, and not much else).
+
+A model without the variable 'insertions' would look like this,
+
+```{r, echo=FALSE}
+p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
+                 (1 + devs_log + max_commit_age_log + 
+                    commits_log | language_id) +
+                 (1 | project_id),
+               family = negbinomial,
+               data = fse.data)
+
+p$prior[1] <- "normal(0,0.5)"
+p$prior[5] <- "lkj(2)"
+p$prior[7] <- "normal(0,5)"
+p$prior[8] <- "weibull(2,1)"
+```
+
+```{r, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+m_no_insertions <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
+                         (1 + devs_log + max_commit_age_log + 
+                            commits_log | language_id) +
+                         (1 | project_id),
+                       family = negbinomial,
+                       data = fse.data,
+                       prior = p,
+                       control = list(adapt_delta = 0.95))
+```
+
+In the model above we've set weakly informative priors and the model's diagnostics indicate that we've converged towards a stationary posterior.
+
+However, if we compare the parameter estimates from this model to $\mathcal{M}$, we see that there are very little changes.
+
+```{r}
+fixef(M)
+fixef(m_no_insertions)
+```
+
+Let's now turn our attention to the TOPLAS dataset, which is a 'cleaned' subset of the FSE dataset. The above analysis will now guide us when we [analyze the TOPLAS dataset](./bda-cq-2.html). We have followed the same workflow as above for the TOPLAS analysis, but we do not report on all steps.
+                               
+# Computational environment
+
+```{r}
+sessionInfo()
+```
+
+```{r}
+end.time <- Sys.time()
+round((end.time - start.time), 3)
+```
+
+# Appendix
+
+Estimated random effects from the candidate model $\mathcal{M}$. The languages ($1$--$17$) are the following,
+```{r}
+levels(fse.data$language)
+```
+
+```{r}
+ranef(M)
+```
+
+# References

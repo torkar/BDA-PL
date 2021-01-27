@@ -1,0 +1,514 @@
+---
+title: "Bayesian data analysis of programming languages"
+subtitle: "Part III: Summary"
+author: "R. Torkar, C. A. Furia, and R. Feldt"
+date: '`r paste("First created on 2020-02-02. Updated on", Sys.Date())`.'
+
+css: ./tables_format.css
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    df_print: paged
+bibliography: [./refs.bib]
+link-citations: yes
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup2, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+library(ggplot2)
+library(brms)
+library(rethinking)
+library(ggthemes)
+library(tidybayes)
+library(forcats)
+library(bayesplot)
+library(LaplacesDemon)
+library(latex2exp)
+library(patchwork)
+library(tufte)
+library(ggridges)
+
+OBJECT_DIR  <- "Objects"
+
+## For determinism
+SEED = 20061215
+set.seed(20061215)
+
+source("../caf/utils.R")
+
+# run on multi-core cpus. We use the default four
+options(mc.cores=parallel::detectCores())
+```
+
+# Preparation
+We've done sanity checks of our models and the posterior predictive checks and diagnostics showed that they were sane. Let's take our two models and compare them and their output.
+
+```{r error=FALSE, message=FALSE, warning=FALSE, cache=TRUE, results='hide'}
+
+toplas.data <- load.TOPLAS(cleanup=TRUE)
+toplas.languages <- levels(toplas.data$language[1])
+toplas.data <- by.project.language(toplas.data)
+
+fse.data <- load.FSE(cleanup=TRUE)
+fse.languages <- levels(fse.data$language[1])
+fse.data <- by.project.language(fse.data)
+
+fse.data$commits_log <- log(fse.data$commits)
+fse.data$insertions_s <- scale(fse.data$insertions)
+fse.data$max_commit_age_log <- log(fse.data$max_commit_age)
+fse.data$devs_log <- log(fse.data$devs)
+fse.data = subset(fse.data, select = -c(domain))
+fse.data$project_id <- as.integer(fse.data$project)
+
+toplas.data$commits_log <- log(toplas.data$commits)
+toplas.data$insertions_s <- scale(toplas.data$insertions)
+toplas.data$max_commit_age_log <- log(toplas.data$max_commit_age)
+toplas.data$devs_log <- log(toplas.data$devs)
+toplas.data = subset(toplas.data, select = -c(domain))
+toplas.data$project_id <- as.integer(toplas.data$project)
+```
+
+```{r model_compile, error=FALSE, message=FALSE, warning=FALSE, cache=TRUE, results='hide'}
+p_toplas <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + 
+                        insertions_s +
+                        (1 + devs_log + max_commit_age_log + commits_log + 
+                           insertions_s | language_id) + 
+                        (1 | project_id),
+                      family = negbinomial,
+                      data = toplas.data)
+
+p_fse <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + 
+                     commits_log + insertions_s +
+                     (1 + devs_log + max_commit_age_log + commits_log + 
+                        insertions_s | language_id) + 
+                     (1 | project_id),
+                   family = negbinomial,
+                   data = fse.data)
+
+# set priors for toplas and fse models
+p_toplas$prior[1] <- "normal(0,1)"
+p_toplas$prior[6] <- "lkj(2)"
+p_toplas$prior[8] <- "normal(0,5)"
+p_toplas$prior[9] <- "weibull(2,1)"
+
+p_fse$prior[1] <-  "normal(0,1)" 
+p_fse$prior[6] <-  "lkj(2)" 
+p_fse$prior[8] <-  "normal(0,5)" 
+p_fse$prior[9] <- "weibull(2,1)"
+
+M_toplas <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + 
+                  commits_log + insertions_s +
+                  (1 + devs_log + max_commit_age_log + 
+                     commits_log + insertions_s | language_id) + 
+                  (1 | project_id),
+         family = negbinomial, data = toplas.data, prior = p_toplas, 
+         sample_prior = "yes", control = list(adapt_delta=0.99), 
+         seed = SEED)
+
+M_fse <- M <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + 
+                    commits_log + insertions_s +
+                    (1 + devs_log + max_commit_age_log + commits_log + 
+                       insertions_s| language_id) + 
+                    (1 | project_id),
+         family = negbinomial, data = fse.data, prior = p_fse, 
+         sample_prior = "yes", control = list(adapt_delta=0.95), 
+         seed = SEED)
+```
+
+# Parameter estimates and their uncertainties for $\mathcal{M}_{\text{FSE}}$ and $\mathcal{M}_{\text{TOPLAS}}$
+From an information theoretical perspective it would be nice if we could directly compare the out of sample prediction of the two models. Alas, that is not possible since they use different data sets. This leads us to instead consider the variance of each model component and their respective parameter estimates. Let's start with correlations.
+
+## Correlations
+
+```{r correlation_plots, echo=FALSE, fig.width=4, fig.height=6}
+par(mfrow = c(2,1))
+par(cex.main = 0.7)
+par(cex.axis = 0.7)
+par(cex.lab = 0.7)
+
+lkj <- rlkjcorr(1e6, K=2, eta=2) # our prior on correlations
+
+post_toplas <- posterior_samples(M_toplas)
+post_fse <- posterior_samples(M_fse)
+
+## cor_language_id__devs_log__max_commit_age_log
+plot(NULL, xlim=c(-1,1), ylim=c(0,1.2), main="Correlations developers vs. max commit age", xlab = "", ylab = "")
+dens(post_toplas$cor_language_id__devs_log__max_commit_age_log, add=TRUE)
+dens(lkj[,1,2], add=TRUE, col="blue")
+abline(v=median(post_toplas$cor_language_id__devs_log__max_commit_age_log), lty = "dashed")
+
+plot(NULL, xlim=c(-1,1), ylim=c(0,1.2), main="Correlations developers vs. max commit age", xlab = "", ylab = "")
+dens(post_fse$cor_language_id__devs_log__max_commit_age_log, add=TRUE)
+dens(lkj[,1,2], add=TRUE, col="blue")
+abline(v=median(post_fse$cor_language_id__devs_log__max_commit_age_log), lty = "dashed")
+```
+
+If we examine the correlation plots (see above) we see that there is a small difference in the correlation between 'developers' vs. 'max commit age' (the blue is our prior). In the TOPLAS data (upper plot) it's slightly negative, while in the FSE data it's positive. 'Cleaning' the data set and removing, e.g., Typescript, could manifest itself this way.
+
+```{r corr_toplas, echo=FALSE}
+par(mfrow = c(3,2))
+#par(cex.main = 0.7)
+#par(cex.axis = 0.7)
+#par(cex.lab = 0.7)
+
+## toplas
+plot(NULL, xlim=c(-1,1), ylim=c(0,1.2), main="dev vs. ins", xlab = "", ylab="")
+dens(post_toplas$cor_language_id__devs_log__insertions_s, add=TRUE)
+dens(lkj[,1,2], add=TRUE, col="blue")
+abline(v=median(post_toplas$cor_language_id__devs_log__insertions_s), lty = "dashed")
+
+# fse
+plot(NULL, xlim=c(-1,1), ylim=c(0,1.2), main="dev vs. ins", xlab = "", ylab="")
+dens(post_fse$cor_language_id__devs_log__insertions_s, add=TRUE)
+dens(lkj[,1,2], add=TRUE, col="blue")
+abline(v=median(post_fse$cor_language_id__devs_log__insertions_s), lty = "dashed")
+
+# toplas
+plot(NULL, xlim=c(-1,1), ylim=c(0,1.2), main="age vs. ins", xlab = "", ylab="")
+dens(post_toplas$cor_language_id__max_commit_age_log__insertions_s, add=TRUE)
+dens(lkj[,1,2], add=TRUE, col="blue")
+abline(v=median(post_toplas$cor_language_id__max_commit_age_log__insertions_s), lty = "dashed")
+
+#fse
+plot(NULL, xlim=c(-1,1), ylim=c(0,1.2), main="age vs ins", xlab = "", ylab="")
+dens(post_fse$cor_language_id__max_commit_age_log__insertions_s, add=TRUE)
+dens(lkj[,1,2], add=TRUE, col="blue")
+abline(v=median(post_fse$cor_language_id__max_commit_age_log__insertions_s), lty = "dashed")
+
+#toplas
+plot(NULL, xlim=c(-1,1), ylim=c(0,1.2), main="commits vs. ins", xlab = "", ylab = "")
+dens(post_toplas$cor_language_id__commits_log__insertions_s, add=TRUE)
+dens(lkj[,1,2], add=TRUE, col="blue")
+abline(v=median(post_toplas$cor_language_id__commits_log__insertions_s), lty = "dashed")
+
+#fse
+plot(NULL, xlim=c(-1,1), ylim=c(0,1.2), main="commits vs. ins", xlab = "", ylab = "")
+dens(post_fse$cor_language_id__commits_log__insertions_s, add=TRUE)
+dens(lkj[,1,2], add=TRUE, col="blue")
+abline(v=median(post_fse$cor_language_id__commits_log__insertions_s), lty = "dashed")
+
+```
+
+Looking above, at the six correlations from TOPLAS (left column) and FSE (right column), we see that any correlation against 'insertions' is negative for TOPLAS, while the opposite holds on two occasions for FSE.
+
+## Variance
+If we examine the project- and language-wise variance and compare them for our two models we see (below) that there's not much difference. In both models, the project variance is fairly well estimated to be around $0.3$ or slightly less, while the language variance might be lower, but we have much more uncertainty. 
+
+```{r var_lang_proj, echo=FALSE}
+var_toplas <- post_toplas %>%
+  ggplot(aes(x = sd_language_id__Intercept)) +
+  geom_density(size = 0, fill = "#E69F00", alpha = 0.3) + # orange
+  geom_density(aes(x = sd_project_id__Intercept), 
+               size = 0, fill = "#009E73", alpha = 0.3)  + # green
+  scale_y_continuous(NULL, breaks = NULL) +
+  annotate("text", x = 0.1, y = 8, label = "Language") +
+  annotate("text", x = 0.24, y = 10, label = "Project") +
+  xlab(expression(sigma)) + ylab("") + ggtitle("TOPLAS") +
+  coord_cartesian(xlim=c(0,0.5)) + theme_tufte()
+
+var_fse <- post_fse %>%
+  ggplot(aes(x = sd_language_id__Intercept)) +
+  geom_density(size = 0, fill = "#E69F00", alpha = 0.3) + # orange
+  geom_density(aes(x = sd_project_id__Intercept), 
+               size = 0, fill = "#009E73", alpha = 0.3)  + # green
+  scale_y_continuous(NULL, breaks = NULL) +
+  annotate("text", x = 0.1, y = 6, label = "Language") +
+  annotate("text", x = 0.22, y = 10, label = "Project") +
+  xlab(expression(sigma)) + ylab("") + ggtitle("FSE") +
+  coord_cartesian(xlim=c(0,0.5)) + theme_tufte()
+
+var_toplas/var_fse
+
+```
+
+Additionally, we see that in the FSE model (lower plot, above) that language variance is *even more spread out*, compared to the TOPLAS model, perhaps an indication of the former having more languages in the data set, which also then contains more uncertainty.
+
+## Slopes (random/varying effects)
+Next, how does the variance differ between the slopes when having language as a varying intercept?
+
+```{r var_slopes, echo=FALSE}
+var_toplas <- post_toplas %>%
+  ggplot(aes(x = sd_language_id__devs_log)) +
+  geom_density(size = 0, fill = "#E69F00", alpha = 0.3) + # orange
+  geom_density(aes(x = sd_language_id__max_commit_age_log), 
+               size = 0, fill = "#009E73", alpha = 0.3)  + # green
+  geom_density(aes(x = sd_language_id__commits_log), 
+               size = 0, fill = "#0072B2", alpha = 0.3)  + # blue
+  geom_density(aes(x = sd_language_id__insertions_s), 
+               size = 0, fill = "#CC79A7", alpha = 0.1)  + #pink
+  scale_y_continuous(NULL, breaks = NULL) +
+  coord_cartesian(xlim = c(0, 0.09)) +
+  xlab(label = expression(sigma)) +
+  annotate("text", x = 0.035, y = 25, label = "devs") +
+  annotate("text", x = 0.009, y = 40, label = "age") +
+  annotate("text", x = 0.029, y = 35, label = "commits") +
+  annotate("text", x = 0.06, y = 13, label = "insertions") +
+  ggtitle("Model TOPLAS") + theme_tufte()
+
+var_fse <- post_fse %>%
+  ggplot(aes(x = sd_language_id__devs_log)) +
+  geom_density(size = 0, fill = "#E69F00", alpha = 0.3) + # orange
+  geom_density(aes(x = sd_language_id__max_commit_age_log), 
+               size = 0, fill = "#009E73", alpha = 0.3)  + # green
+  geom_density(aes(x = sd_language_id__commits_log), 
+               size = 0, fill = "#0072B2", alpha = 0.3)  + # blue
+  geom_density(aes(x = sd_language_id__insertions_s), 
+               size = 0, fill = "#CC79A7", alpha = 0.1)  + #pink
+  scale_y_continuous(NULL, breaks = NULL) +
+  coord_cartesian(xlim = c(0, 0.09)) +
+  xlab(label = expression(sigma)) +
+  annotate("text", x = 0.04, y = 16, label = "devs") + #orange
+  annotate("text", x = 0.031, y = 31, label = "age") + #green
+  annotate("text", x = 0.01, y = 32, label = "commits") + # blue
+  annotate("text", x = 0.06, y = 14.5, label = "insertions") + # pink
+  ggtitle("Model FSE") + theme_tufte()
+
+var_toplas / var_fse
+```
+
+We clearly see above that the variance is lower in the TOPLAS model (everything is pushed more to the left). Most likely an indication of removing languages and, thus, removing uncertainty (i.e., these languages might be in very few projects and thus provide little for predictions). One could argue, however, that since we employ Bayesian multi-level models and, thus, make use of partial pooling, those languages still provides some information that we're missing in the case of the TOPLAS model. In short, one should be vary of throwing data away. 
+
+It might be more obvious if we look at the marginal posterior distributions for each language and a number of projects.
+
+Let's look how much the *first* 16 projects vary and then, further below, our 16 languages. We've kept the $x$-axis set to `c(-1.5,1.5)` so that they are directly comparable.
+
+```{r lang_vs_proj, echo=FALSE}
+mcmc_intervals(M_toplas, regex_pars = c("^r_project_id\\[[1-9],Intercept","^r_project_id\\[[1][0-6],Intercept")) +
+  coord_cartesian(xlim = c(-1.5,1.5))
+
+mcmc_intervals(M_toplas, regex_pars = c("^r_language_id\\[[1-9],Intercept", "^r_language_id\\[[1][0-6],Intercept")) +
+  coord_cartesian(xlim = c(-1.5,1.5))
+```
+
+Clearly, things are moving around more among projects, than among languages...
+
+Finally, below we see our varying-effect (random) for 'devs' (bold line, while the gray area shows the 95% uncertainty) for all 16 languages. On the $x$-axis we have developers (log scale), while on the $y$-axis the number of bugs.
+<!-- https://gganimate.com/articles/gganimate.html -->
+
+```{r, echo=FALSE, fig.fullwidth=TRUE, fig.width=8, fig.height=6}
+# out_f <- conditional_effects(
+#   M_toplas,
+#   "devs_log"
+#   )[[1]]
+
+out_r <- conditional_effects(
+  M_toplas,
+  "devs_log", 
+  conditions = data.frame(language_id=seq(1:16)),
+  re_formula = NULL
+  )[[1]]
+
+
+langs <- levels(toplas.data$language)
+p <- list()
+
+for(i in 1:length(langs)) {
+  
+  p[[i]]  <- out_r %>% filter(language_id==eval(i)) %>%
+    ggplot(aes(devs_log, estimate__)) +
+    geom_line() +
+    geom_ribbon(
+      aes(ymin = lower__, ymax = upper__),
+      alpha = .33
+    ) +
+    geom_line(aes(group = language_id)) +
+    ggtitle(eval(langs[i])) + xlab("") + ylab("") +
+    scale_y_continuous(breaks = c(25, 100, 175, 250), limits = c(0,250)) +
+    theme_tufte() + theme(panel.grid.major.y = element_line(size=0.1))
+}
+
+( p[[1]] | p[[2]] | p[[3]] | p[[4]] ) /
+( p[[5]] | p[[6]] | p[[7]] | p[[8]] ) /
+( p[[9]] | p[[10]] | p[[11]] | p[[12]] ) /
+( p[[13]] | p[[14]] | p[[15]] | p[[16]] )
+```
+
+So, e.g., Scala and Haskell have more timid slopes but also, in comparison, less uncertainty (compared to, e.g., C).
+
+And here we look at the varying effects for 'commits' ($x$-axis).
+
+```{r, echo=FALSE, fig.fullwidth=TRUE, fig.width=8, fig.height=6}
+out_r <- conditional_effects(
+  M_toplas,
+  "commits_log", 
+  conditions = data.frame(language_id=seq(1:16)),
+  re_formula = NULL
+  )[[1]]
+
+
+langs <- levels(toplas.data$language)
+p <- list()
+
+for(i in 1:length(langs)) {
+  
+  p[[i]]  <- out_r %>% filter(language_id==eval(i)) %>%
+    ggplot(aes(commits_log, estimate__)) +
+    geom_line() +
+    geom_ribbon(
+      aes(ymin = lower__, ymax = upper__),
+      alpha = .33
+    ) +
+    geom_line(aes(group = language_id)) +
+    ggtitle(eval(langs[i])) + xlab("") + ylab("") +
+    scale_y_continuous(breaks = c(50000, 100000, 150000), 
+                       limits = c(0, 150000)) +
+    scale_x_continuous(breaks = c(4,8,12)) +
+    theme_tufte() +
+    theme(panel.grid.major.y = element_line(size=0.1))
+}
+
+( p[[1]] | p[[2]] | p[[3]] | p[[4]] ) /
+( p[[5]] | p[[6]] | p[[7]] | p[[8]] ) /
+( p[[9]] | p[[10]] | p[[11]] | p[[12]] ) /
+( p[[13]] | p[[14]] | p[[15]] | p[[16]] )
+```
+
+Clojure, Scala, and Ruby don't go as ballistic as, e.g., Objective-C and C++, but of course uncertainty increases with number of commits, clearly showing that we would like a sample that contains projects with a larger number of commits.
+
+Next, for 'insertions' ($x$-axis is scaled), which can be considered a bit problematic as we've seen in the previous analyses, we'll contrast two languages, C and Clojure, to show the huge differences concerning uncertainty in the slopes.
+
+```{r}
+conditional_effects(M_toplas, "insertions_s", 
+                    conditions = data.frame(language_id = 1), 
+                    re_formula = NULL)
+
+conditional_effects(M_toplas, "insertions_s", 
+                    conditions = data.frame(language_id = 4), 
+                    re_formula = NULL)
+```
+
+For C (first plot), one can see that when number of insertions increase, the number of bugs decrease. Additionally, the uncertainty is much the same. Looking at the next plot, for Clojure, we see no trend, other than that uncertainty starts to increase dramatically after $10$ insertions. This is surely a sign of the quality of the data, i.e., for Clojure we don't have many projects with many insertions. On the other hand, the number of insertions might naturally vary more in these projects?
+
+Finally, we have 'max_commit_age' and the varying slopes for each language. We see clearly that for some languages the uncertainty is a bit more manageable, could it be a natural tendency of these languages concerning max commit age?
+
+```{r, echo=FALSE, fig.fullwidth=TRUE, fig.width=8, fig.height=6}
+out_r <- conditional_effects(
+  M_toplas,
+  "max_commit_age_log", 
+  conditions = data.frame(language_id=seq(1:16)),
+  re_formula = NULL
+  )[[1]]
+
+
+langs <- levels(toplas.data$language)
+p <- list()
+
+for(i in 1:length(langs)) {
+  
+  p[[i]]  <- out_r %>% filter(language_id==eval(i)) %>%
+    ggplot(aes(max_commit_age_log, estimate__)) +
+    geom_line() +
+    geom_ribbon(
+      aes(ymin = lower__, ymax = upper__),
+      alpha = .33
+    ) +
+    geom_line(aes(group = language_id)) +
+    ggtitle(eval(langs[i])) + xlab("") + ylab("") +
+    scale_y_continuous(limits = c(0, 200)) +
+    scale_x_continuous(breaks = c(3, 6, 9)) +
+    theme_tufte() + theme(panel.grid.major.y = element_line(size=0.1))
+}
+
+( p[[1]] | p[[2]] | p[[3]] | p[[4]] ) /
+( p[[5]] | p[[6]] | p[[7]] | p[[8]] ) /
+( p[[9]] | p[[10]] | p[[11]] | p[[12]] ) /
+( p[[13]] | p[[14]] | p[[15]] | p[[16]] )
+```
+
+To summarize, we see that there are large differences in uncertainty concerning the estimates of varying effects. That in itself could be an indication of a biased sample, but it could also be an indication of natural tendencies a language has, i.e., perhaps some languages naturally vary more concerning some covariates?
+
+To conclude this part, we could continue looking at these aspects more by collecting another data set. However, we believe that, by and large, this data set answers the question which language is the 'best.' The answer is: It depends.
+
+# Simulations
+Alice has been tasked to recruit a core development team for a new project concerning an ML implementation for health-care workers. As such, the leadership team has spent some time arguing which programming language they should mainly use in the project. All members in the leadership group are convinced that a number of factors come at play here, e.g., access to skilled talent comfortable with a particular programming language, suitability of the programming language to handle ML implementations, and language performance concerning, e.g., number of bugs vs. size of project, where size could mean a number of things: number of developers, commits, insertions, and max commit age.
+
+## Assumptions
+A first input in the discussion the leadership group had was GitHub's [list](https://www.businessinsider.com/most-popular-programming-languages-github-2019-11?) of most popular programming languages. Alice argued that they should look at most popular languages since it would be easier to ensure getting skilled employees and after analyzing all languages on the list, the team came up with four languages they believed could handle the project's requirements (e.g., access to external mature ML libraries, etc.):^[The languages are ranked based on the assumption of finding skilled talent, i.e., Java is the easiest since it's believed to be the most popular language. Of course, the opposite could be true, the more popular, the harder it might be to get skilled employees.]
+
+* Java
+* Python
+* C#
+* C++
+* Ruby
+
+Alice and the team next assumed that the project would consist of anything from 40 to 150 developers (with commit access). When their visiting software engineer researcher asked about the expected max commit age, number of commits, and insertions, they looked clueless. Hence, here is the list of assumptions:
+
+* Only Java, Python, C#, C++, and Ruby are relevant due to the project's requirements.
+* Number of 
+  + developers: $\log(30) \to \log(150) \approx 3.5 \to 5$,
+  + commits: $\log(250) \approx 5.5$,
+  + insertions: $28000$, i.e., since we're using scaled values this is approximately `r (28000 - attr(toplas.data$insertions_s, "scaled:center")) / attr(toplas.data$insertions_s, "scaled:scale")` and,
+  + the max commit age: $\log(7) \approx 2$
+  
+The three latter assumptions are taken from data from a previously published study.^[See [here](https://rpubs.com/torkar/568340).]
+
+## Sampling
+Since, by chance, we already have a Bayesian multi-level model designed, implemented, and validated, we'll feed the above assumptions to the model. First, we create data frames that represent the covariate settings we are interested in for each language. Then we feed those settings to the model to see what it predicts. Finally, we plot the posterior probability densities for each language, given those settings.
+
+```{r, echo=FALSE}
+# {2,3,9,14,15} is our set of language_idx
+# C#, C++, Java, Python, Ruby
+post_list <- lapply(c(2,3,9,14,15), function(i){ 
+  
+  nd <- data.frame(devs_log = seq(from = 3.5, to = 5, by = 0.1),
+                   language_id = eval(i), 
+                   commits_log = 5.5,
+                   insertions_s = (28000 - attr(toplas.data$insertions_s, "scaled:center")) / attr(toplas.data$insertions_s, "scaled:scale"),
+                   max_commit_age_log = 2)
+  
+  posterior_predict(M_toplas, 
+                    newdata = nd, 
+                    re_formula = ~ (1 + devs_log + max_commit_age_log +
+                                      commits_log + insertions_s | 
+                                      language_id))
+})
+
+# post_list now contains five elements. Each element is one of the 
+# languages of interest. For each language we then have 16 columns, 
+# i.e., predicted number of bugs for each level of devs_log (from 
+# 3.5, to 5.0, by 0.1), where we have 10000 samples at each level 
+# ending up in a big matrix [10000 x 16]
+#
+# Let's now plot our posterior probability densities for each language 
+# given the above covariate settings
+
+plot(NULL, xlim=c(0,200), ylim=c(0,0.035), xlab="number of bugs", 
+     ylab = "density", axes = F )
+axis(1, at=c(0,50,100,150,200))
+
+# C# 1, C++ 2, Java 3, Python 4, Ruby 5
+for(i in 1:length(post_list)) {
+  dens(post_list[[eval(i)]], add = TRUE, col = hcl.colors(length(post_list))[i] )
+}
+
+text(36, 0.034, "Ruby")
+text(92, 0.01, "C++")
+```
+
+So, case closed: Ruby is the 'best' language since it had the lowest median number of bugs (well, honestly, any language except, perhaps, C++ would do). But is it really so? 
+
+Of course it isn't so easy to give an answer. A programming language lives in a context, that is, the project it's being used in. That project consists of several delimiting factors for a programming language.^[You wouldn't develop your company's new booking system in C, or develop the motor control software for a car using JavaScript.]
+
+The probability of getting an employee knowing Ruby might be significantly lower, since the popularity of the language is lower, compared to getting employees knowing Java. As a matter of fact, let's assume that the popularity of a programming language is directly proportional to the possibility of finding skilled employees using that language. According to the GitHub list the languages are ranked ('our' languages in bold):
+
+1. JavaScript
+2. **Python**
+3. **Java**
+4. PHP
+5. **C#**
+6. **C++**
+7. TypeScript
+8. Shell
+9. C
+10. **Ruby**
+
+So the bold languages are the one to compare with, and that is something we showed in earlier analysis how to do. In the case we presented above, our bet is on Python (one of the languages between Ruby and C++), since more people are available knowing Python.
+

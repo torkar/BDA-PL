@@ -1,0 +1,533 @@
+---
+title: "Bayesian data analysis of program languages"
+subtitle: "Part II: TOPLAS data"
+author: "R. Torkar, C. A. Furia, and R. Feldt"
+date: '`r paste("First created on 2019-12-28. Updated on", Sys.Date())`.'
+
+css: ./tables_format.css
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    df_print: paged
+bibliography: [./refs.bib]
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup2, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+library(ggplot2)
+library(pogit) # nb variable selection by Dvorzak and Wagner
+library(brms)
+library(rethinking)
+library(ggthemes)
+library(tidybayes)
+library(forcats)
+library(bayesplot)
+library(LaplacesDemon)
+library(latex2exp)
+library(patchwork)
+library(tufte)
+library(ggridges)
+
+OBJECT_DIR  <- "Objects"
+
+## For determinism
+SEED = 20061215
+set.seed(SEED)
+
+# run on multi-core cpus. We use the default four
+options(mc.cores=parallel::detectCores())
+```
+
+# Data preparation and descriptive statistics
+
+We first run the prep script by Furia loading the TOPLAS data [@TOPLAS].
+
+```{r message=FALSE}
+source("../caf/utils.R")
+setup.data() 
+toplas.data <- load.TOPLAS(cleanup=TRUE)
+# Only 16 languages now
+toplas.languages <- levels(toplas.data$language[1])
+toplas.data <- by.project.language(toplas.data)
+```
+
+Manually do a $\log$ transformation:
+
+```{r}
+toplas.data$commits_log <- log(toplas.data$commits)
+toplas.data$insertions_log <- log(toplas.data$insertions)
+toplas.data$max_commit_age_log <- log(toplas.data$max_commit_age)
+toplas.data$devs_log <- log(toplas.data$devs)
+toplas.data$insertions_s <- scale(toplas.data$insertions)
+```
+
+Finally, remove columns not needed and add a column that represents the 'project_id' as a numeric.
+
+```{r}
+toplas.data = subset(toplas.data, select = -c(domain))
+toplas.data$project_id <- as.integer(toplas.data$project)
+```
+
+Our list now looks like this, where 'n_bugs' ($\mathbb{N}^+$) is our outcome variable and 'language_id' ($\mathbb{N}^+$), 'commits' ($\mathbb{R}^+$), 'max_commit_age' ($\mathbb{R}^+$), and 'devs' ($\mathbb{N}^+$) are our potential predictors.
+```{r}
+glimpse(toplas.data)
+```
+
+and we have no NAs nor zero-inflation in the outcome variable:
+
+```{r}
+table(is.na(toplas.data))
+table(toplas.data$n_bugs == 0)
+```
+
+Since n_bugs $\in \mathbb{N}^+$ we would expect to use a Poisson($\lambda$) likelihood. If we, however, look at some more descriptive statistics of 'n_bugs' we see that there is a large difference between the mean and the variance,
+
+```{r}
+summary(toplas.data$n_bugs)
+var(toplas.data$n_bugs)
+```
+
+clearly indicating that we need to model the variance separately (each Poisson count observation should have its own rate). Hence, we'll assume that the underlying data-generative process approximately follows a negative binomial distribution $\mathrm{NB}(\lambda,\phi)$.^[[Wikipedia entry for the negative binomial distribution](https://en.wikipedia.org/wiki/Negative_binomial_distribution)]
+
+# Initial model development and out of sample comparisons
+We design a number of models and then conduct out of sample prediction comparisons using PSIS-LOO [@vehtariGG17loo]. Our models, $\mathcal{M}_1,\ldots,\mathcal{M}_3$, become more complex at each step. We start by designing a simple varying intercepts model (varying according to 'language_id'). For this and the following models we'll set weakly regularizing priors (which we'll come back to later when conducting prior predictive checks). 
+
+In $\mathcal{M}_2$ we add predictors as population-level effects. Finally, in $\mathcal{M}_3$ we use varying intercepts ('language_id') *and* varying slopes (for each population-level effect). Additionally we add another varying intercept (according to 'project_id').
+
+```{r include=FALSE}
+p <- get_prior(n_bugs ~ 1 + (1 | language_id),
+          family = negbinomial(),
+          data=toplas.data)
+p$prior[1] <- "normal(0,5)"
+p$prior[2] <- "weibull(2,1)"
+```
+
+```{r m1, error=FALSE, message=FALSE, warning=FALSE, cache=TRUE, results='hide'}
+m1 <- brm(n_bugs ~ 1 + (1 | language_id),
+          family = negbinomial(),
+          data=toplas.data,
+          seed = SEED,
+          prior = p)
+```
+
+```{r include=FALSE}
+p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + 
+                 insertions_s + (1 | language_id),
+               family = negbinomial(),
+               data = toplas.data)
+p$prior[1] <- "normal(0,0.5)"
+p$prior[6] <- "normal(0,5)"
+p$prior[7] <- "weibull(2,1)"
+```
+
+```{r m2, error=FALSE, message=FALSE, warning=FALSE, cache=TRUE, results='hide'}
+
+m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + 
+            insertions_s + (1 | language_id),
+          family = negbinomial(),
+          data = toplas.data,
+          seed = SEED,
+          prior = p)
+```
+
+```{r include=FALSE}
+p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + 
+                 insertions_s +
+                 (1 + devs_log + max_commit_age_log + commits_log + 
+                    insertions_s | language_id) + 
+                 (1 | project_id),
+               family = negbinomial,
+               data = toplas.data)
+p$prior[1] <- "normal(0,1)"
+p$prior[6] <- "lkj(2)"
+p$prior[8] <- "normal(0,5)"
+p$prior[9] <- "weibull(2,1)"
+```
+
+```{r m3, error=FALSE, message=FALSE, warning=FALSE, cache=TRUE, results='hide'}
+
+m3 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + 
+            insertions_s +
+            (1 + devs_log + max_commit_age_log + commits_log + 
+               insertions_s | language_id) + 
+            (1 | project_id),
+          family = negbinomial,
+          data = toplas.data,
+          seed = SEED,
+          control = list(adapt_delta=0.95),
+          prior = p)
+```
+
+```{r model_comparison, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
+# reloo to take into account problematic observations
+m1 <- add_criterion(m1, "loo")  
+m2 <- add_criterion(m2, "loo")
+m3 <- add_criterion(m3, "loo")
+
+# compare out of sample predictions
+loo_res <- loo_compare(m1, m2, m3) 
+```
+ 
+Comparing out of sample prediction capabilities of the models, we see that $\mathcal{M}_7$ takes the lead.
+
+```{r kable_loo, echo=FALSE, message=TRUE, warning=FALSE}
+round(loo_res, digits=2) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+
+Let us focus on the top-two highest ranked models, $\mathcal{M}_3$ and $\mathcal{M}_2$. $\mathcal{M}_6$ has $\textrm{elpd_diff}=$ `r round(loo_res[2,1], digits = 2)` and $\textrm{se_diff}=$ `r round(loo_res[2,2], digits = 2)`, hence with $z_{99\%}=2.576$, we have [`r round(loo_res[2,1] + c(-1,1) * loo_res[2,2] * 2.576, 2)`]. Since zero is *not* in the interval one could make a convincing claim that $\mathcal{M}_3$ is significantly better (generally we want a model to be $2$--$4$ SE away).
+
+In this case we're after the best out of sample prediction and we have strong indications that $\mathcal{M}_3$ is 'better', relatively speaking. Let us set $\mathcal{M}_3$ as our target model $\mathcal{M}$.
+
+```{r} 
+M <- m3
+```
+
+# Prior predictive checks
+
+For our target model $\mathcal{M}$ we have a wide prior for our intercept, $\alpha$ (i.e., $\mathrm{N}(0,5)$. A, virtually, flat prior for our correlation matrix, $\mathcal{L}$ (i.e., $\mathrm{LKJ}(2)$). Wide priors for our $\sigma$, standard deviation, which models the group-level ('random') effects (i.e., $\mathrm{Weibull}(2,1)$. Finally, we have a default prior of $\gamma(0.01,0.01)$ for the shape parameter $\phi$.
+
+\[
+\begin{eqnarray}
+\alpha & \sim & \textrm{Normal}(0,5)\\
+\beta_1,\ldots,\beta_4 & \sim & \textrm{Normal}(0,0.5)\\
+\mathcal{L} & \sim & \textrm{LKJ}(2)\\
+\sigma & \sim & \textrm{Weibull}(2,1)\\
+\phi & \sim & \gamma(0.01,0.01)
+\end{eqnarray}
+\]
+
+We shouldn't expect $\beta$ (i.e., the parameter of a population-level effect) to vary extremely much, and we thus put $\mathcal{N}(0,0.5)$ as a prior on these effects (which is still fairly wide). After all, $\mathcal{N}(0,0.5)$, with four population-level effects, implies $(4 \times 0.5)^2 = \exp(2) \approx 54$, due to the $\log$ link emloyed in a Negative-Binomial.
+
+Let's sample only from priors:
+
+```{r model_priors, cache=TRUE, warning=FALSE, message=FALSE, error=FALSE, results='hide', cache=TRUE}
+M_priors <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_s +
+            (1 + devs_log + max_commit_age_log + commits_log + insertions_s | language_id) + 
+            (1 | project_id),
+          family = negbinomial, data = toplas.data, prior = p, 
+          sample_prior = "only")
+```
+
+```{r pripc, cache=TRUE,echo=FALSE, fig.margin=TRUE, warning=FALSE, message=FALSE, error=FALSE, fig.cap="Dashed vertical line is max value, while dark blue line is our data and light blue lines are draws from the priors"}
+pp_check(M_priors) + 
+  scale_x_continuous(trans="log2") + 
+  geom_vline(xintercept=121302, linetype="dashed")
+```
+
+If we plot the data, $y$, (dashed line is the maximum value of 'n_bugs' in our data), together with output from our model using priors only, $y_{\mathrm{rep}}$ we see that with our priors we'll still allow extreme values on the outcome scale.
+
+# Posterior predictive checks
+Let's now conduct posterior predictive checks, i.e., see how well our model fits our data. But first we need to check the diagnostics.
+
+## Diagnostics
+
+The minimum effective sample size is above 10%. 
+
+```{r}
+table(neff_ratio(M)>0.1)
+```
+
+$\widehat{R}$ is consistently below 1.01,
+
+```{r}
+table(rhat(M) < 1.01)
+```
+
+and plotting the four chains for each parameter that was sampled we see the characteristic "fat hairy caterpillar" plots,
+
+```{r caterpillar, cache=TRUE}
+plot(M)
+```
+
+## Fit
+
+If we plot our kernel density estimates from our model with our empirical data we get a quick visual of the fit.
+
+```{r, warning=FALSE, message=FALSE, fig.margin=TRUE, fig.cap="Kernel density estimates from our model, $N=10$, with the distribution of our original data in a darker shade"}
+pp_check(M) + 
+  scale_x_continuous(trans = "log2")
+```
+
+A violin plot summarizes the fit for each language,
+
+```{r violin, echo=FALSE, warning=FALSE, message=FALSE, fig.align="center", cache=TRUE}
+pp_check(M, type = "violin_grouped", group = "language_id", y_draw="points") +
+  scale_y_continuous(trans = "log2") +
+  scale_x_discrete(labels=levels(toplas.data$language)) + 
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+We can also check the conditional effects on our population-level parameters (see margin figures).
+
+```{r effects, echo=FALSE, fig.margin=TRUE, cache=TRUE}
+# include no random effects
+conditional_effects(M, ask=FALSE)
+```
+
+How do our population effects look like?^[For an excellent introduction to these terms please see this [post](https://lindeloev.net/lets-rename-fixed-to-population-level-and-random-to-varying/)] (I will refrain from printing the varying effects since it will take up a lot of space.)
+
+```{r}
+round(fixef(M), 2)
+```
+
+Let's next plot our varying effects for 'language' (varying according to our slopes 'devs', 'max_commit_age', 'commits', and 'insertions').
+
+```{r mcmc_areas, echo=FALSE, warning=FALSE, message=FALSE}
+p1 <- mcmc_areas(M, regex_pars="devs_log]") +
+  scale_y_discrete(labels=levels(toplas.data$language)) + 
+  ggtitle("devs")
+
+p2 <- mcmc_areas(M, regex_pars="max_commit_age_log]") +
+  scale_y_discrete(labels=levels(toplas.data$language)) +
+  ggtitle("max commit age")
+  
+p3 <- mcmc_areas(M, regex_pars="commits_log]") +
+  scale_y_discrete(labels=levels(toplas.data$language)) + 
+  ggtitle("commits")
+
+p4 <- mcmc_areas(M, regex_pars="insertions_s]") +
+  scale_y_discrete(labels=levels(toplas.data$language)) + 
+  ggtitle("insertions")
+
+(p1 + p2) / (p3 + p4)
+```
+
+## Predictions
+<!-- As a first step, we can now set our predictors to the original median values and see how the languages differ. -->
+
+```{r, echo=FALSE}
+# Set project_id = NA, i.e., "dummy variables are zero"
+nd_median <- with(toplas.data,
+                  expand.grid(project_id = NA, language_id = seq(1:16),
+                              devs_log = median(toplas.data$devs_log),
+                              max_commit_age_log = median(toplas.data$max_commit_age_log),
+                              insertions_log = median(toplas.data$insertions_log),
+                              commits_log = median(toplas.data$commits_log),
+                              insertions_s = 0))
+
+# do posterior predictions
+PPC_median <- posterior_predict(M, newdata = nd_median)
+
+# set sane names on columns
+colnames(PPC_median) <- levels(toplas.data$language)
+
+# what is the median predicted value of 'n_bugs' for each language
+# given 'nd_median' data frame above?
+df <- data.frame(n_bugs = numeric(16), lang = character(16),
+                 stringsAsFactors = FALSE)
+
+for(i in seq(1:16)) {
+  df$n_bugs[i] <- median(PPC_median[,i])
+  df$lang[i] <- colnames(PPC_median)[i]
+}
+```
+
+<!-- The table to the left only provides us with a rough overview of language differences when setting continuous covariates to their medians. We should try out covariates at different levels and plot the outcome with uncertainty to see how it varies depending on the level. -->
+
+The plots below shows posterior predictions of 'n_bugs' when our covariates are set to their empirical median and minimum levels (setting to maximum levels would increase uncertainty for a number of languages, i.e., Scale, Clojure, Perl, Go, Coffeescript, Haskell, and Python). 
+
+What is clearly evident is that the order (languages are plotted in a descending order from left to right) changes depending on covariates' settings.
+
+```{r, echo=FALSE}
+# nd_median and PPC_median we have above already. Let's create
+# data frames where we also set covariates at their min and max values
+nd_min <- data.frame(language_id=seq(1:16),
+                     project_id=NA,
+                     devs_log=min(toplas.data$devs_log),
+                     max_commit_age_log=min(toplas.data$max_commit_age_log),
+                     insertions_log=min(toplas.data$insertions_log),
+                     commits_log=min(toplas.data$commits_log),
+                     insertions_s= min(toplas.data$insertions_s))
+
+nd_max <- data.frame(language_id= seq(1:16), 
+                     devs_log=max(toplas.data$devs_log),
+                     project_id=NA,
+                     max_commit_age_log=max(toplas.data$max_commit_age_log),
+                     insertions_log=max(toplas.data$insertions_log),
+                     commits_log=max(toplas.data$commits_log),
+                     insertions_s=max(toplas.data$insertions_s))
+
+# posterior predictions
+PPC_min <- posterior_predict(M, newdata = nd_min)
+PPC_max <- posterior_predict(M, newdata = nd_max)
+
+colnames(PPC_min) <- levels(toplas.data$language)
+colnames(PPC_max) <- levels(toplas.data$language)
+
+PPC_max <- as.data.frame(PPC_max) %>% 
+                  gather(lang, bugs)
+PPC_median <- as.data.frame(PPC_median) %>% 
+                  gather(lang, bugs)
+PPC_min <- as.data.frame(PPC_min) %>% 
+                  gather(lang, bugs)
+```
+
+```{r violin-outcome, echo=FALSE, cache=TRUE, fig.fullwidth=TRUE, fig.width=8, fig.height=8}
+p1 <- ggplot(PPC_max, aes(x=reorder(lang, -bugs), y=bugs)) + 
+  geom_violin() + 
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") +
+  ggtitle("Max (developers = 1383, max commit age = 16090, \ncommits = 305361, insertions = 2.7e7)")
+
+p2 <- ggplot(PPC_median, aes(x=reorder(lang, -bugs), y=bugs)) + 
+  geom_violin() + 
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") +
+  ggtitle("Median (developers = 15, max commit age = 1010, \ncommits = 248, insertions = 28191)")
+
+p3 <- ggplot(PPC_min, aes(x=reorder(lang, -bugs), y=bugs)) + 
+  geom_violin() + 
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") +
+  ggtitle("Min (developers = 1, max commit age = 12, \ncommits = 24, insertions = 127)")
+
+p2/p3
+```
+
+Which of the above two plots tells the truth? Well, the truth is connected to your reality, i.e., practical significance.
+
+Let's assume that we have a project with $30$ developers where we have previous data in our company showing $1500$ commits, a max commit age of $1000$, with approximately $8000$ insertions. And you can only choose between two languages: Python or Ruby.
+
+```{r violin-outcome2, fig.margin=TRUE, echo=FALSE}
+newdata <- data.frame(language_id=c(14,15), # Python and Ruby
+                      devs_log=log(30),
+                      project_id = NA,
+                      max_commit_age_log=log(1000),
+                      insertions_s = (8000 - attr(toplas.data$insertions_s, "scaled:center")) / attr(toplas.data$insertions_s, "scaled:scale"),
+                      commits_log=log(1456))
+
+PPC_new <- posterior_predict(M, newdata=newdata)
+names <- c("Python", "Ruby")
+colnames(PPC_new) <- names
+PPC_new <- as.data.frame(PPC_new) %>% 
+                  gather(lang, bugs)
+
+ggplot(PPC_new, aes(x=lang, y=bugs)) + 
+  geom_violin() + 
+  xlab("") +
+  ggtitle("Custom (developers = 32, max commit age = 1368, \ncommits = 1456, insertions = 8000)")
+```
+
+If we look at the plot above, all things being equal, you should probably consider using Ruby in your project.
+
+But do we have a 'significant difference' between these two languages, or for that matter among all languages?
+
+## Effect sizes
+First, let's conduct posterior predictive checks on each language. We'll use covariates' values from the sample as input, with the idea that the sample is representative of the population. 
+
+```{r contrasts, include=FALSE}
+
+rMeans <- NULL
+for(i in seq(1:16)){ # PPC for each language and store it in rMeans
+  ppc <- posterior_predict(M, newdata = toplas.data[toplas.data$language_id == i, ],
+                           re_formula = NA)
+  rMeans[[i]] <- cbind(rowMeans(ppc))
+}
+
+contrasts <- NULL
+# All pairwise combinations of languages (120)
+c <- combn(seq(1:16), 2) 
+# Also as factors for printing
+l <- combn(levels(toplas.data$language), 2) 
+
+for(i in 1:ncol(c)) # loop through all combinations
+  contrasts[[i]] <- rMeans[[c[1,i]]] - rMeans[[c[2,i]]] # calculate contrasts
+
+j = 0
+for(i in 1:length(contrasts)) { # for each contrast
+  hpdi <- HPDI(contrasts[[i]], prob = 0.999) # calculate HPDI
+  s <- sign(hpdi) # check if + or -
+  
+  if((s[1] == 1 && s[2] == 1))
+    j <- j + 1
+    
+  if((s[1] == -1 && s[2] == -1))
+    j <- j + 1
+} 
+print(j) # On 0.999 level we have 98 sign effects in difference
+
+```
+
+Next, we calculate the contrast between each language (120 combinations when we have 16 languages). Then it's very easy to check the distribution of the difference between any two languages and in that way also investigate effect sizes (there's no need to look at point estimates since we have a probability distribution of the *differences* between two languages).^[with 95% credible intervals]
+
+```{r diff, echo=FALSE}
+plot(NULL, xlim = c(-1000, 10000), ylim = c(0,0.0015), xlab = "Number of bugs", ylab="Density", axes=F, main="C# vs. C")
+axis(1, tick=T)
+axis(2, tick=T)
+dens(contrasts[[1]], add = T)
+```
+
+If we plot the difference between C# and C we see that it's positive, indicating that C almost always performs worse than C# (if it would have been negative then C# would be worse).
+
+```{r diff2, echo=FALSE, fig.margin=TRUE}
+plot(NULL, xlim = c(-100, 70), ylim = c(0,0.04), xlab = "Number of bugs", ylab="Density", axes=F, main="Coffeescript vs. Go")
+axis(1, tick=T)
+axis(2, tick=T)
+dens(contrasts[[56]], add=T)
+```
+```{r diff3, echo=FALSE, fig.margin=TRUE}
+plot(NULL, xlim = c(-800, 0), ylim = c(0,0.009), xlab = "Number of bugs", ylab="Density", axes=F, main="Objective-C vs. Ruby")
+axis(1, tick=T)
+axis(2, tick=T)
+dens(contrasts[[109]], add=T)
+```
+
+Let's also look at a case when there's no significant difference (Coffeescript vs.\ Go) and when there is a clear difference in the other direction (Objective-C vs.\ Ruby), i.e., when the values are clearly negative and, so, Objective-C is clearly worse.
+
+Once again, these are the distributions in differences we get when we reuse the data from our sample and average over them. As we saw previously, with other covariates we get other outcomes.
+
+In the [final analysis](https://rpubs.com/torkar/572170) we'll look briefly at the differences the two models display, and how much the varying effects play a role in predictions. Finally, we'll also do simulations using one of the models, because that's where the rubber hits the road and all that we've done can comes to some use (except for trying to answer a question which really isn't interesting, i.e., generally speaking which language is the 'best').
+
+```{r, include=FALSE}
+# If we want to plot all *non*-significant differences
+for(i in 1:length(contrasts)) { # for each contrast
+  hpdi <- HPDI(contrasts[[i]], prob = 0.95) # calculate HPDI
+  s <- sign(hpdi) # check if + or -
+  
+  if((s[1] == -1 && s[2] == 1)) # no SSD
+    print(i)
+} 
+```
+
+# Bayesian variable selection for $\textrm{NB}(\lambda,\phi)$
+We'll conduct variable selection for negative-binomial (NB). Unfortunately, the Stan team does not yet (January, 2020) support variable selection for the NB.^[[Projection predictive variable selection](https://github.com/stan-dev/projpred)] However, there's a package that uses MCMC for variable selection of NB distributions [@dvorzakW16vs].
+
+Set our outcome variable:
+
+```{r}
+y <- toplas.data$n_bugs
+```
+
+Select response variables and store them as a matrix. We remove 'n_bugs' (our $y$), original variables not transformed, and the factor variables 'language' and 'project' (since they are indicators we'll use later as varying intercepts).
+
+```{r}
+X <- as.matrix(toplas.data[,c(-1:-8, -13)])
+```
+
+Run the variable selection,
+
+```{r varsel, echo=TRUE, cahe=TRUE, results='hide'}
+varsel_res <- negbinBvs(y = y, X = X)
+```
+and plot the chain and output the summary:
+
+```{r varsel_plot, fig.align="center"}
+plot(varsel_res, burnin = FALSE, thin = FALSE)
+summary(varsel_res)
+```
+
+In short, compared to our analysis of the FSE data set, where we wanted to exclude one variable, here all variables should be included.
+
+# Computational environment
+```{r session_info, include=TRUE, echo=TRUE, results='markup'}
+devtools::session_info()
+```
+
+# References
