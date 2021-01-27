@@ -1,3 +1,5 @@
+https://zenodo.org/badge/333339610.svg
+
 # Replication package for manuscript on Bayesian analysis on programming languages data
 
 In the `docs` folder you will find the three `Rmd` scripts developed for this replication package. All three scripts can also be found as `html` files in that folder. The easiest way to work with this packages is to:

@@ -643,8 +643,11 @@ Recall that in $\mathcal{M}_1$ we did not have project id as a varying intercept
 Examining project id we see that there are `r length(unique(fse.data$project_id))` projects. Let's see the distribution of rows for each project, i.e., how many rows do we have for each project?
 
 ```{r}
-hist(table(fse.data$project_id)+0.001, main="", xlab="Number of rows", xaxt="n", 
-     labels = TRUE, ylim = c(0,500))
+hist(table(fse.data$project_id)+0.001, 
+     main="", 
+     xlab="Number of rows", 
+     xaxt="n", 
+     ylim = c(0,500))
 
 axis(1, at=seq(1.25,7.25), labels = seq(1:7))
 ```
