@@ -573,7 +573,7 @@ Examining project id we see that there are `r length(unique(fse.data$project_id)
 
 ```{r}
 hist(table(fse.data$project_id)+0.001, main="", xlab="Number of rows", xaxt="n", 
-     labels = TRUE, ylim = 500)
+     labels = TRUE, ylim = c(0,500))
 axis(1, at=seq(1.25,7.25), labels = seq(1:7))
 ```
 

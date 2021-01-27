@@ -1,4 +1,6 @@
 # History files
+docs/Data/
+docs/index_files/
 .DS_Store
 .Rhistory
 .Rapp.history
