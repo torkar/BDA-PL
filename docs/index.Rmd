@@ -43,7 +43,7 @@ options(future.rng.onMisuse="ignore")
 # priors
 options(mc.cores=parallel::detectCores())
 
-# Set cmdstanr as backend for brms if you haveit
+# Set cmdstanr as backend for brms if you have it
 options(brms.backend="rstan")
 
 bayesplot_theme_set(theme_default(base_size = 16, base_family = "sans"))
@@ -121,8 +121,9 @@ There's nothing strange with the above. We simply assume that n_bugs is distribu
 m0p <- brm(n_bugs ~ 1 + (1 | language_id),
            family = negbinomial(),
     		   data=fse.data,
-    		   sample_prior = "only",
+    		   sample_prior = "only"
     		   )
+
 pp_check(m0p, nsamples = 100) + scale_x_log10()
 ```
 
@@ -135,7 +136,8 @@ Running the above model with default priors and settings (in later examples we w
 m0 <- brm(n_bugs ~ 1 + (1 | language_id),
           family = negbinomial(),
           data=fse.data,
-          refresh = 0)
+          refresh = 0
+          )
 ```
 
 we then conduct posterior predictive checks.
@@ -200,7 +202,10 @@ First, we'll make sure to check what priors such a model expects us to set,
 ```{r}
 (p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + 
                   insertions_log + (1 | language_id), 
-                data = fse.data, family = negbinomial))
+                data = fse.data, 
+                family = negbinomial
+                )
+ )
 ```
 
 For our $\beta$s we have unsuitable uniform priors, $\mathrm{Uniform}(-\infty,\infty)$. For the intercept, $\alpha$, a Student's $t$ distribution with $\nu=3$, and the same for the standard deviation, $\sigma$, used for the varying intercepts (however, in this case it's automatically truncated with a lower bound of $0$ since $\sigma$ cannot be negative). Finally, there is a default prior for the shape, $\phi$, i.e., $\gamma(0.01,0.01)$.
@@ -230,9 +235,14 @@ p$prior[7] <- "weibull(2,1)"
 
 m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
                  insertions_log + (1 | language_id),
-          family = negbinomial(), prior = p, data=fse.data, 
-          chains = 1, iter = 1000, 
-          sample_prior = "only", refresh = 0)
+          family = negbinomial(), 
+          prior = p, 
+          data=fse.data, 
+          chains = 1, 
+          iter = 1000, 
+          sample_prior = "only", 
+          refresh = 0
+          )
 ```
 
 We used only one chain and we sampled for only $1000$ iterations.^[We used Hamiltonian Monte Carlo with the No U-Turn Sampler (NUTS), which `brms` uses thanks to the functionality from the `Stan` package.] Half of the iterations are thrown away (warm-up), which leads us to having $500$ samples in our prior probability distribution.^[In the remaining executions we'll refrain from showing the output, but we have made sure that no warnings exist when sampling (simply running this `Rmd` file yourself will allow you to check this).]
@@ -250,8 +260,11 @@ Let's sample the model with our empirical data by simply removing the statement 
 ```{r m0-2, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
 m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
                  insertions_log + (1 | language_id), 
-          data = fse.data, family = negbinomial,
-          prior = p, refresh = 0)
+          data = fse.data, 
+          family = negbinomial,
+          prior = p, 
+          refresh = 0
+          )
 ```
 
 ### Posterior predictive checks
@@ -402,6 +415,7 @@ lkj2 <- rlkjcorr(100000, K = 2, eta = 2)
 dens(lkj2[,1,2], col = "blue",
      xlab = "",
      ylab = "")
+
 dens(lkj1[,1,2], add = TRUE)
 ```
 
@@ -414,7 +428,10 @@ As usual, we'll first check the default priors and then set our priors as stipul
               (1 + devs_log + max_commit_age_log + commits_log + insertions_log | language_id) +
               (1 | project_id),
           family = negbinomial,
-          data = fse.data))
+          data = fse.data
+          )
+ )
+
 p$prior[1] <- "normal(0,0.5)"
 p$prior[6] <- "lkj(2)"
 p$prior[8] <- "normal(0,5)"
@@ -427,9 +444,14 @@ Next we sample our model using only the priors and conduct prior predictive chec
 m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_log +
             (1 + devs_log + max_commit_age_log + commits_log + insertions_log | language_id) +
             (1 | project_id),
-          family = negbinomial(), prior = p, 
-          data=fse.data, chains = 1, iter = 1000, 
-          sample_prior = "only", refresh = 0)
+          family = negbinomial(), 
+          prior = p, 
+          data=fse.data, 
+          chains = 1, 
+          iter = 1000, 
+          sample_prior = "only", 
+          refresh = 0
+          )
 ```
 
 ```{r m2-post, warning=FALSE, message=FALSE}
@@ -446,7 +468,8 @@ m2 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions_
           prior = p, 
           data=fse.data, 
           refresh = 0, 
-          control = list(adapt_delta=0.95))
+          control = list(adapt_delta=0.95)
+          )
 ```
 
 ### Posterior predictive checks
@@ -574,6 +597,7 @@ Examining project id we see that there are `r length(unique(fse.data$project_id)
 ```{r}
 hist(table(fse.data$project_id)+0.001, main="", xlab="Number of rows", xaxt="n", 
      labels = TRUE, ylim = c(0,500))
+
 axis(1, at=seq(1.25,7.25), labels = seq(1:7))
 ```
 
@@ -613,7 +637,8 @@ post %>%
   theme(axis.title.y=element_blank(),
         axis.text.y=element_blank(),
         axis.ticks.y=element_blank()) + 
-  xlab("Number of bugs") + scale_x_continuous(trans="log10")
+  xlab("Number of bugs") + 
+  scale_x_continuous(trans="log10")
 
 # In case one wants to compare deviations from 0 (intercept)
 # # draw samples from the posterior
@@ -829,9 +854,12 @@ If we plot the difference between C# and C (above) we see that it's positive, in
 Let's also look (below) at cases where there is no significant difference (Coffeescript vs. Go)
 
 ```{r diff2, echo=FALSE}
-plot(NULL, xlim = c(-100, 70), ylim = c(0,0.04), xlab = "Number of bugs", ylab="Density", axes=F, main="Coffeescript vs. Go")
+plot(NULL, xlim = c(-100, 70), ylim = c(0,0.04), xlab = "Number of bugs", 
+     ylab="Density", axes=F, main="Coffeescript vs. Go")
+
 axis(1, tick=T)
 axis(2, tick=T)
+
 dens(contrasts[[60]], add=T)
 ```
 
@@ -899,7 +927,8 @@ p <- get_prior(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
                     commits_log | language_id) +
                  (1 | project_id),
                family = negbinomial,
-               data = fse.data)
+               data = fse.data
+               )
 
 p$prior[1] <- "normal(0,0.5)"
 p$prior[5] <- "lkj(2)"
@@ -915,7 +944,8 @@ m_no_insertions <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log 
                        family = negbinomial,
                        data = fse.data,
                        prior = p,
-                       control = list(adapt_delta = 0.95))
+                       control = list(adapt_delta = 0.95)
+                       )
 ```
 
 In the model above we've set weakly informative priors and the model's diagnostics indicate that we've converged towards a stationary posterior.
