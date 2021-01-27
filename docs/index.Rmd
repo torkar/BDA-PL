@@ -116,7 +116,7 @@ Very often, when designing statistical models, we want to have a simple model, $
 There's nothing strange with the above. We simply assume that n_bugs is distributed according to a Negative-Binomial process with the rate $\lambda$ (just like in Poisson) and a parameter $\phi$ that controls the variance (which must be positive). For the linear part in our model (Line 2) we use a $\log$ link to translate from the probability space $p \in (0,1)$.
 
 ### Prior predictive checks
-
+<!-- Try gganimate with this-->
 ```{r, warning=FALSE, message=FALSE, error=FALSE, results='hide', cache=TRUE}
 m0p <- brm(n_bugs ~ 1 + (1 | language_id),
            family = negbinomial(),
