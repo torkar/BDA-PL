@@ -226,7 +226,7 @@ First, we'll make sure to check what priors such a model expects us to set,
 
 For our $\beta$s we have unsuitable uniform priors, $\mathrm{Uniform}(-\infty,\infty)$. For the intercept, $\alpha$, a Student's $t$ distribution with $\nu=3$, and the same for the standard deviation, $\sigma$, used for the varying intercepts (however, in this case it's automatically truncated with a lower bound of $0$ since $\sigma$ cannot be negative). Finally, there is a default prior for the shape, $\phi$, i.e., $\gamma(0.01,0.01)$.
 
-It might be prudent to set our own priors to see, using prior predictive checks, how the prior probability distribution looks like when we sample only from the priors.^[In this replication package we follow recommendations on priors. For an introduction please see (here)[https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations].] We'll set $\mathrm{Normal}(0,5)$ for our intercept, $\mathrm{Weibull}(2,1)$ for our dispersion $\sigma$, and $\mathrm{Normal}(0,0.5$ for each of our four $\beta$s. In math notation we now have this model,
+It might be prudent to set our own priors to see, using prior predictive checks, how the prior probability distribution looks like when we sample only from the priors.^[In this replication package we follow recommendations on priors. For an introduction please see (here)[https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations].] We'll set $\mathrm{Normal}(0,5)$ for our intercept, $\mathrm{Weibull}(2,1)$ for our dispersion $\sigma$, and $\mathrm{Normal}(0,0.5)$ for each of our four $\beta$s. In math notation we now have this model,
 
 \begin{align}
   \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi) &\\
@@ -240,7 +240,7 @@ It might be prudent to set our own priors to see, using prior predictive checks,
   (\#eq:m1)
 \end{align}
 
-The $\mathrm{Gamma}$ prior on $\phi$ allows only positive real numbers, as does the $\mathrm{Weibull}(2,1)$ for our varying intercepts. Additionally, having $\mathrm{Normal}(0,1)$ on our $\beta$s might seem tight, but the additive terms imply a variance of $4^2=16$. Let's see what the prior predictive checks will show. 
+The $\mathrm{Gamma}$ prior on $\phi$ allows only positive real numbers, as does the $\mathrm{Weibull}(2,1)$ for our varying intercepts. Additionally, having $\mathrm{Normal}(0,0.05)$ on our $\beta$s might seem tight, but the additive terms imply a variance of $(0.5*4)^2=4$ (and then we also use a log link function! Let's see what the prior predictive checks will show. 
 
 Sample the model using no data.
 
@@ -277,7 +277,7 @@ pp_check(m1p, nsamples = 100) +
   ylab("Density")
 ```
 
-In the plot above we've $\log$ transformed the $x$-axis so we can see what's actually happening. In short, the priors are all over the place (and a number of them are $\infty$). 
+In the plot above we've $\log10()$ transformed the $x$-axis so we can see what's actually happening. In short, the priors are all over the place (and a number of them are $\infty$). The maximum number of bugs in our dataset is hardly $\gt10^{9}$.
 
 Let's sample the model with our empirical data by simply removing the statement `sample_prior = "only"` and run with the default number of chains ($4$) and iterations per chain ($2000$).
 
@@ -487,7 +487,7 @@ m2p <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions
 ```
 
 ```{r m2-post, warning=FALSE, message=FALSE}
-pp_check(m2p, nsamples = 100) + 
+pp_check(m2p) + 
   scale_x_log10(
    breaks = scales::trans_breaks("log10", function(x) 10^x),
    labels = scales::trans_format("log10", scales::math_format(10^.x))
@@ -573,7 +573,7 @@ Next, we calculate the relative out of sample prediction capabilities of the mod
 
 We see that there's some diagnostics showing that we have Pareto $k>0.7$ in $\mathcal{M}_0$ and $\mathcal{M}_2$. In this particular case, running $10$-fold cross validation, one will see that the estimations of the LOO information criteria is stable, i.e., the criteria is precisely estimated using moment matching correction to the importance sampling for the problematic observations [@aki19momentmatch].
 
-At the bottom of the output, we see that $\mathcal{M}_2$ seems to take the lead (placed on the first row). If we assume $z_{99\%} = 2.58$, then one clearly sees that it's considerably better, i.e., $\mathrm{CI}_{95\%}$[`r round(lc$diffs[2,1] + c(-1,1) * 2.58 * lc$diff[2,2], 1)`] does not cross zero (after all it's more than $7$ SE away from $\mathcal{M}_1$. In short, $\mathcal{M}_2$ is very likely the best model we have in our arsenal at the moment, hence, we declare it to be $\mathcal{M}$,
+At the bottom of the output, we see that $\mathcal{M}_2$ seems to take the lead (placed on the first row). If we assume $z_{99\%} = 2.58$, then one clearly sees that it's considerably better, i.e., $\mathrm{CI}_{95\%}$[`r round(lc$diffs[2,1] + c(-1,1) * 2.58 * lc$diff[2,2], 1)`] does not cross zero (after all it's more than $7$ SE away from $\mathcal{M}_1$). In short, $\mathcal{M}_2$ is very likely the best model we have in our arsenal at the moment, hence, we declare it to be $\mathcal{M}$,
 
 ```{r}
 M <- m2
@@ -647,6 +647,7 @@ hist(table(fse.data$project_id)+0.001,
      main="", 
      xlab="Number of rows", 
      xaxt="n", 
+     labels = c("466","","186","","44","","16","","10","","6","","1"), 
      ylim = c(0,500))
 
 axis(1, at=seq(1.25,7.25), labels = seq(1:7))
@@ -675,13 +676,14 @@ There's no question that the data has swamped our prior. One clearly sees our wi
 
 In fact, what we're seeing is the effect of multi-level modeling taking place. In order for us to avoid overfitting, projects with more data will inform projects with little data. It's a remarkable fact that HMC can sample this so nicely in the end. Making use of the project id allowed us to improve the out of sample predictions considerably!
 
-Let's plot a **random** sample of $25$ projects to get a feeling for the variability among projects (this plot will of course look different every time we plot it). We'll plot the $x$-axis using logarithm base $10$.
+Let's plot a **random** sample of $10$ projects to get a feeling for the variability among projects (this plot will of course look different every time we plot it). We'll plot the $x$-axis using logarithm base $10$.
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 post <- data.frame(posterior_predict(M)) #predictions
-# add +1 to eveything so we can do log10 (it won't matter much anyways)
+# add +1 to everything so we can do log10 (it won't matter much anyways)
 post <- post + 1
-# sample 25 random projects and make long format
+
+# sample 10 random projects and make long format
 post %>% 
   sample(10) %>%
   mcmc_areas_ridges() + 
