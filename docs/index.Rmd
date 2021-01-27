@@ -700,8 +700,7 @@ post %>%
   coord_cartesian(clip = "off") + 
   xlab("Number of bugs")
 
-# In case one wants to compare deviations from 0 (intercept)
-# # draw samples from the posterior
+# In case one wants to compare deviations from 0 (intercept) draw samples from the posterior
 # post <- posterior_samples(M)
 # 
 # post %>% 
