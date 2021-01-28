@@ -1,5 +1,5 @@
 
-[![Zotero DOI](https://zenodo.org/badge/333339610.svg)](https://zenodo.org/record/4472963#.YBGLLy2HJpQ)
+[![Zotero DOI](https://zenodo.org/badge/333339610.svg)](https://zenodo.org/record/4475516#.YBKOMC2HJpQ)
 
 # Replication package for manuscript on Bayesian analysis on programming languages data
 
