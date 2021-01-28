@@ -491,7 +491,7 @@ m2p <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions
 ```
 
 ```{r m2-post, warning=FALSE, message=FALSE}
-pp_check(m2p) + 
+pp_check(m2p, nsamples = 100) + 
   scale_x_log10(
    breaks = scales::trans_breaks("log10", function(x) 10^x),
    labels = scales::trans_format("log10", scales::math_format(10^.x))
@@ -499,7 +499,8 @@ pp_check(m2p) +
   annotation_logticks(side = "b", outside=TRUE) +
   coord_cartesian(clip = "off") + 
   xlab("Number of bugs") + 
-  ylab("Density")
+  ylab("Density") +
+  geom_vline(xintercept = max(fse.data$n_bugs), linetype = "longdash")
 ```
 
 So, looks good. The priors are all over the place and additionally allow quite absurd values. Let's now sample the model with data.
