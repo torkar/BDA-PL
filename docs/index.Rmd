@@ -116,7 +116,7 @@ Very often, when designing statistical models, we want to have a simple model, $
 There's nothing strange with the above. We simply assume that n_bugs is distributed according to a Negative-Binomial process with the rate $\lambda$ (just like in Poisson) and a parameter $\phi$ that controls the variance (which must be positive). For the linear part in our model (Line 2) we use a $\log$ link to translate from the probability space $p \in (0,1)$.
 
 ### Prior predictive checks
-<!-- Try gganimate with this-->
+
 ```{r, warning=FALSE, message=FALSE, error=FALSE, results='hide', cache=TRUE}
 m0p <- brm(n_bugs ~ 1 + (1 | language_id),
            family = negbinomial(),
@@ -132,9 +132,11 @@ pp_check(m0p, nsamples = 100) +
   annotation_logticks(side = "b", outside=TRUE) +
   coord_cartesian(clip = "off") + 
   xlab("Number of bugs") + 
-  ylab("Density")
+  ylab("Density") +
+  geom_vline(xintercept = max(fse.data$n_bugs), linetype = "longdash")
 ```
 
+The prior predictive checks (where we use default priors for now), show that the priors allow large (even absurd) values (the $x$-axis has been `log10()` transformed). The dashed line indicates the maximum number of bugs in our empirical data.
 
 ### Posterior predictive checks
 
@@ -274,10 +276,11 @@ pp_check(m1p, nsamples = 100) +
   annotation_logticks(side = "b", outside=TRUE) +
   coord_cartesian(clip = "off") + 
   xlab("Number of bugs") + 
-  ylab("Density")
+  ylab("Density") +
+  geom_vline(xintercept = max(fse.data$n_bugs), linetype = "longdash")
 ```
 
-In the plot above we've $\log10()$ transformed the $x$-axis so we can see what's actually happening. In short, the priors are all over the place (and a number of them are $\infty$). The maximum number of bugs in our dataset is hardly $\gt10^{9}$.
+In the plot above we've $\log10()$ transformed the $x$-axis so we can see what's actually happening. In short, the priors are all over the place (and a number of them are $\infty$). The maximum number of bugs in our dataset is depicted by the dashed line.
 
 Let's sample the model with our empirical data by simply removing the statement `sample_prior = "only"` and run with the default number of chains ($4$) and iterations per chain ($2000$).
 
@@ -291,6 +294,7 @@ m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
           )
 ```
 
+
 ### Posterior predictive checks
 ```{r, message=FALSE, warning=FALSE, error=FALSE}
 pp_check(m1) + 
@@ -303,6 +307,8 @@ pp_check(m1) +
   xlab("Number of bugs") + 
   ylab("Density")
 ```
+
+We see that the model has a much better fit to the empirical data. This is an indication that adding the four population-level parameters makes a difference.
 
 ### Diagnostics
 
@@ -345,7 +351,7 @@ summary(m1)
 
 Above we see the estimated $\sigma$ for the group-level effects, i.e., the $17$ languages which we used as varying intercepts. Then we see our $\alpha$ (Intercept), which is a population-level effect (fixed effect), just like our four $\beta$ estimates. Finally, we have the shape estimated. Except for the shape, all other parameters must be transformed using the exponential, since we employed a $\log$ link function in our model to translate to the probability space.
 
-The shape parameter, $\phi$, is an indication of the level of aggregation/clustering among our languages, i.e., when it goes towards infinity it corresponds to an absence of aggregation among our languages.
+The shape parameter, $\phi$, is an indication of the level of aggregation/clustering among our languages, i.e., when it goes towards infinity it corresponds to an absence of aggregation among our languages. It's also an indirect measure of variance, since $\sigma^2 = \lambda + \lambda^2 / \phi$.
 
 In order for us to get some estimates on the different languages we need to look into our varying intercepts, i.e., the languages. However, simply looking at point estimates to check if they are significant or not, is quite simply not sane when we have a posterior probability distribution.
 
@@ -353,9 +359,7 @@ In order for us to get some estimates on the different languages we need to look
 ranef(m1)
 ```
 
-As we can see above, quite many of our $17$ languages are 'significant.' But, what does it mean in practice? Well, we have a posterior probability distribution we can ask questions to. 
-
-Assume that we use the mean for the four predictors we've set as population-level effects, i.e., devs, max_commit_age, insertions, and commits, then we simply check what the difference is between two of the languages, let's take the first two, which are C and C#.
+As we can see above, quite many of our $17$ languages are 'significant.' But, what does it mean in practice? Well, we have a posterior probability distribution we can ask questions to. As an example, assume that we use the empirical mean for the four predictors we've set as population-level effects, i.e., devs, max_commit_age, insertions, and commits, then we simply check what the difference is between two of the languages, let's take the first two, which are C and C#.
 
 ```{r}
 nd <- data.frame(
@@ -438,7 +442,7 @@ There are a few things that makes this model look different compared to Equation
 
 The idea with the latter part is that we believe projects could learn from each other by employing partial pooling. Some projects have several rows of data, while some only a few. If the projects having more data informs projects with less data we might learn more, but still avoid overfitting.
 
-Before we continue with our prior predictive checks it might be worthwhile to see what an $\mathrm{LKJ}()$ prior implies. This prior is used for covariance matrices exclusively. The difference between $\mathrm{LKJ}(1)$ and $\mathrm{LKJ}(2)$ is that in the former case it implies a virtually flat prior, while in the latter case we claim that we are skeptical of extreme correlations. In our case, we have no better information than that.
+Before we continue with our prior predictive checks it might be worthwhile to see what an $\mathrm{LKJ}()$ prior implies. This prior is used for covariance matrices exclusively. The difference between $\mathrm{LKJ}(1)$ and $\mathrm{LKJ}(2)$ is that in the former case it implies a virtually flat prior, while in the latter case we claim that we are skeptical of extreme correlations. In our case, we have no better information than that.^[A very good introduction to LKJ can be read here: http://srmart.in/is-the-lkj1-prior-uniform-yes/]
 
 ```{r lkj, fig.cap="Correlation priors LKJ(1) (black) and LKJ(2) (blue)", echo=FALSE}
 lkj1 <- rlkjcorr(100000, K = 2, eta = 1)
@@ -526,6 +530,7 @@ pp_check(m2) +
   ylab("Density")
 ```
 
+Visually we seem to have a very good fit.
 
 ### Diagnostics
 
@@ -601,7 +606,7 @@ conditional_effects(M, ask=FALSE)
 # plot(p, plot=F)[[1]] + theme_tufte(base_size = 22) + xlab("log(insertions)") + ylab("Number of bugs") 
 ```
 
-For the first three effects we clearly see something is happening when moving along the $x$-axis. With the last effect, 'insertions', it is not as clear; mainly due to the 95% credible interval that dramatically increases.
+For the first three effects we clearly see something is happening when moving along the $x$-axis. With the last effect, 'insertions', it is not as clear; mainly due to the 95% credible interval that dramatically increases. The latter indicates that our variable 'insertions' might not be suitable for inclusion in the model.
 
 What are our population-level estimates? We refrain from printing the group effects (random effects) since it will take up a lot of space but they can be found in the appendix.^[For an excellent introduction to these terms please see this [post](https://lindeloev.net/lets-rename-fixed-to-population-level-and-random-to-varying/).]
 
@@ -636,13 +641,13 @@ Generally speaking, the slope 'insertions' shows more variance, as does, but sli
 
 ## Projects' variability
 
-By plotting our slopes for, e.g.,'insertions', we could see some suspect things. The variability is larger compared to other slopes, but also that Typescript sticks out. This we all got by designing a model that implemented varying intercepts (according to language) with varying slopes (according to the population-level effects insertions, commits, max commit age, and number of developers). However, we do have another varying intercept, i.e., the project id.
+By plotting our slopes for, e.g.,'insertions', we could see some suspect things. The variability is larger compared to other slopes, but also that Typescript sticks out. This we all got by designing a model that implemented varying intercepts (according to language) with varying slopes (according to the population-level effects insertions, commits, max commit age, and number of developers). However, we potentially have another variable we could use as a varying intercept, i.e., the project id.
 
-Recall that in $\mathcal{M}_1$ we did not have project id as a varying intercept, and comparing that model to our final model, we saw that $\mathcal{M}_1$ simply could not compete in out of sample prediction. In short, adding project id *clearly* made a large difference.
+Recall that in $\mathcal{M}_1$ we did not have project id as a varying intercept, and comparing that model to our final model, we saw that $\mathcal{M}_1$ simply could not compete in out of sample prediction. In short, adding project id *clearly* made a large difference from an information theoretical point of view.
 
 Examining project id we see that there are `r length(unique(fse.data$project_id))` projects. Let's see the distribution of rows for each project, i.e., how many rows do we have for each project?
 
-```{r}
+```{r, echo=FALSE}
 hist(table(fse.data$project_id)+0.001, 
      main="", 
      xlab="Number of rows", 
@@ -653,7 +658,7 @@ hist(table(fse.data$project_id)+0.001,
 axis(1, at=seq(1.25,7.25), labels = seq(1:7))
 ```
 
-A clear majority of the projects only have one row. How peculiar, Hamiltonian Monte Carlo (HMC) still cuts through this like a warm knife through butter. Let's plot the prior probability distribution, $\mathrm{Weibull}(2,1)$, and compare it with our posterior.
+A clear majority of the projects only have one row. How peculiar, dynamic Hamiltonian Monte Carlo (HMC) still cuts through this like a warm knife through butter. Let's plot the prior probability distribution, $\mathrm{Weibull}(2,1)$, and compare it with our posterior.
 
 ```{r post_pri_proj, echo=FALSE, warning=FALSE, message=FALSE}
 post <- posterior_samples(M)
@@ -713,12 +718,11 @@ post %>%
 #         axis.ticks.y=element_blank())
 ```
 
-So, projects contain a considerable within and between variability, which is most likely why the model makes such a jump in out of sample predictions when we add projects as a predictor. More than this we don't need to know, after all, what is a significant project? We'd rather compare the variability between categories of languages.
+So, projects contain a considerable within and between variability, which is most likely why the model makes such a jump in out of sample predictions when we add projects as a varying intercept. More than this we don't need to know, after all, what is a significant project? We'd rather compare the variability between and withing languages.
 
 ## Predictions
-As a first step, we can now set our predictors to the original median values and see how the languages differ.
 
-Let's query our posterior probability distribution about the median bugs for each language (all things being equal).
+As a first step, we can now set our predictors to the original median values and see how the languages differ. Let's query our posterior probability distribution about the median bugs for each language (all things being equal).
 
 ```{r, echo=FALSE}
 # Set project_id = NA "all dummy variables are zero"
@@ -757,7 +761,7 @@ df %>%
 
 The table only provides us with a rough overview of language differences when setting continuous covariates to their medians. We should try using our covariates at different levels and plot the outcome with uncertainty to see how it varies depending on the level.
 
-The plots below shows posterior predictions of the numbder of bugs, when our covariates (predictors) are set to their empirical max, median, and minimum levels (note that the $x$-axis uses the logarithm base $10$!) The max level clearly shows uncertainty, but that uncertainty is even more pronounced for the other two levels.
+The plots below shows posterior predictions of the number of bugs, when our covariates (predictors) are set to their empirical max, median, and minimum levels (note that the $y$-axes use logarithm base $10$!) The max level clearly shows uncertainty, but that uncertainty is even more pronounced for the other two levels.
 
 ```{r, echo=FALSE}
 # nd_median and PPC_median we have above already. Let's create
@@ -791,7 +795,7 @@ PPC_min <- as.data.frame(PPC_min) %>%
   gather(lang, bugs)
 ```
 
-What is clearly evident is that the order (languages are plotted in a descending order from left to right) changes depending on covariates' settings. So there's no black or white here, i.e., depending on the covariates' values different languages perform differently.
+What is clearly evident is that the order (languages are plotted in a descending order from left to right, where the right-most languages have fewer bugs) changes depending on covariates' settings. So there's no black or white here, i.e., depending on the covariates' values different languages perform differently.
 
 ```{r violin-outcome, echo=FALSE, fig.fullwidth=TRUE, fig.width=8, fig.height=8}
 PPC_max$bugs1 <- PPC_max$bugs+1 # add 1 to avoid NAs when doing log10()
@@ -830,11 +834,11 @@ p3 <- ggplot(PPC_min, aes(x=reorder(lang, -bugs1), y=bugs1)) +
 p1/p2/p3
 ```
 
-Which of the above plots tells the truth? Well, the truth is connected to your reality, i.e., practical significance. Hence, it varies a lot depending on contextual factors. In our case these factors are represented by the covariates' levels/settings.
+Which of the above plots tells the truth? Well, the truth is connected to your reality, i.e., practical significance. Hence, it varies a lot depending on contextual factors. In our case these factors are represented by the covariates' levels/settings, but many other such factors exist in the form of omitted variable bias.
 
 ### Setting our own reality
 
-Let's assume that we have a project with $30$ developers where we assume that we'll have a project that will run for two years using Ruby and Python. Over these two years we expect on average $2$ commits per day (over 365 days) $2*365$, max commit age of $30*2*365$, and insertions ending up around $30*10*2*365$
+Let's assume that we have a project with $30$ developers which will run for two years using Ruby and Python. Over these two years we expect on average $2$ commits per day (over 365 days) $2*365$, max commit age of $30*2*365$, and insertions ending up around $30*10*2*365$
 
 ```{r violin-outcome2 }
 newdata <- data.frame(language_id=c(14,15), # Python and Ruby
@@ -864,7 +868,7 @@ But do we have a 'statistically significant difference' between these two langua
 
 We'll use covariate values from the empirical data, $y$, as input, with the idea that the sample is representative of the population. This is really not needed, i.e., we can set the values to basically whatever we want, but this way it'll be easier to conduct inferences for all combinations of languages, and since we have a posterior probability distribution we usually don't have to worry about correcting for multiple comparisons. 
 
-If we use a credible level of 0.999 (i.e., 0.1%) we have 116 pairwise differences that are of interest. Then, for each contrast we calculate the 95% Highest Posterior Density Interval (HPDI).^[[Credible intervals](https://en.wikipedia.org/wiki/Credible_interval)] If the HPDI is strictly positive or negative (i.e., does not cover 0) then we have a significant difference on the 95% HPDI concerning the *difference* of two languages (obviously a more conservative approach would be to see that the languages differ with 2--4 $\sigma$, to be considered different enough).
+If we use a credible level of 0.999 (i.e., 0.1%) we have 116 pairwise differences that are of interest. Then, for each contrast we calculate the 95% Highest Posterior Density Interval (HPDI).^[[Credible intervals](https://en.wikipedia.org/wiki/Credible_interval)] If the HPDI is strictly positive or negative (i.e., does not cover 0) then we have a significant difference on the 95% HPDI concerning the *difference* of two languages.
 
 ```{r contrasts, include=FALSE}
 
@@ -976,7 +980,7 @@ plot(varsel_res, burnin = FALSE, thin = FALSE)
 summary(varsel_res)
 ```
 
-$\beta_2$ $\mathrm{P}(.= 1)$ is $\approx 0.5$ so we should think carefully about including it, i.e., the variable 'insertions'. We also have fairly strong argument for 'max_commit_age' being a bit shaky ($\beta_3$ in the above case) by looking at the lower 95% highest posterior density (95%-HPD[l]). For the sake of completeness, and to follow the previous studies, we included them anyway (in our analysis above). But, if we would follow a principled Bayesian workflow, then many would argue that we should not use the predictor 'insertions'. It's also clear, by looking at our analysis above, that 'insertions' is not significant and has questionable contributions to the prediction capabilities of the model (i.e., it contributes with uncertainty, and not much else).
+$\beta_2$ $\mathrm{P}(.= 1)$ is $\approx 0.5$ so we should think carefully about including it, i.e., the variable 'insertions'. We also have fairly strong argument for 'max_commit_age' being a bit shaky ($\beta_3$ in the above case) by looking at the lower 95% highest posterior density (95%-HPD[l]). For the sake of completeness, and to follow the previous studies, we included them anyway (in our analysis above). But, if we would follow a principled Bayesian workflow, then many would argue that we should not use the predictor 'insertions'. It's also clear, by looking at our analysis further above, that 'insertions' is not significant and has questionable contributions to the prediction capabilities of the model (i.e., it contributes with uncertainty, and not much else).
 
 A model without the variable 'insertions' would look like this,
 

@@ -217,9 +217,16 @@ M_priors <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + inser
 ```
 
 ```{r pripc, echo=FALSE, fig.margin=TRUE, warning=FALSE, message=FALSE, error=FALSE, fig.cap="Dashed vertical line is max value, while dark blue line is our data and light blue lines are draws from the priors"}
-pp_check(M_priors) + 
-  scale_x_continuous(trans="log2") + 
-  geom_vline(xintercept=121302, linetype="dashed")
+pp_check(M_priors, nsamples = 100) + 
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ ) +
+  annotation_logticks(side = "b", outside=TRUE) +
+  coord_cartesian(clip = "off") + 
+  xlab("Number of bugs") + 
+  ylab("Density") +
+  geom_vline(xintercept = max(toplas.data$n_bugs), linetype = "longdash")
 ```
 
 If we plot the data, $y$, (dashed line is the maximum value of 'n_bugs' in our data), together with output from our model using priors only, $y_{\mathrm{rep}}$ we see that with our priors we'll still allow extreme values on the outcome scale.
@@ -257,7 +264,7 @@ We can also check the conditional effects on our population-level parameters (se
 conditional_effects(M, ask=FALSE)
 ```
 
-How do our population effects look like?^[For an excellent introduction to these terms please see this [post](https://lindeloev.net/lets-rename-fixed-to-population-level-and-random-to-varying/)] (I will refrain from printing the varying effects since it will take up a lot of space.)
+How do our population effects look like?^[For an excellent introduction to these terms please see this [post](https://lindeloev.net/lets-rename-fixed-to-population-level-and-random-to-varying/)] (we refrain from printing the varying effects since it will take up a lot of space.)
 
 ```{r}
 round(fixef(M), 2)
@@ -477,36 +484,6 @@ for(i in 1:length(contrasts)) { # for each contrast
     print(i)
 } 
 ```
-
-# Bayesian variable selection for $\textrm{NB}(\lambda,\phi)$
-
-We'll conduct variable selection for negative-binomial (NB). Unfortunately, the Stan team does not yet (January, 2020) support variable selection for the NB.^[[Projection predictive variable selection](https://github.com/stan-dev/projpred)] However, there's a package that uses MCMC for variable selection of NB distributions [@dvorzakW16vs].
-
-Set our outcome variable:
-
-```{r}
-y <- toplas.data$n_bugs
-```
-
-Select response variables and store them as a matrix. We remove 'n_bugs' (our $y$), original variables not transformed, and the factor variables 'language' and 'project' (since they are indicators we'll use later as varying intercepts).
-
-```{r}
-X <- as.matrix(toplas.data[,c(-1:-8, -13)])
-```
-
-Run the variable selection,
-
-```{r varsel, echo=TRUE, cache=TRUE, results='hide'}
-varsel_res <- negbinBvs(y = y, X = X)
-```
-and plot the chain and output the summary:
-
-```{r varsel_plot, fig.align="center"}
-plot(varsel_res, burnin = FALSE, thin = FALSE)
-summary(varsel_res)
-```
-
-In short, compared to our analysis of the FSE data set, where we wanted to exclude one variable, here all variables should be included.
 
 # Computational environment
 ```{r session_info, include=TRUE, echo=TRUE, results='markup'}
