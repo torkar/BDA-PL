@@ -105,26 +105,42 @@ As predictors (independent variables) we have project numbers (unique ID for eac
 
 ## Take 0
 
-Very often, when designing statistical models, we want to have a simple model, $\mathcal{M}_0$, to compare against. A simple model in this case would be a model where we simply estimate the grand mean, let's call it $\alpha$, and then any deviations from that mean that is due to each language $\alpha_{\mathrm{LANG}[i]}$:
+Very often, when designing statistical models, we want to have a simple model, $\mathcal{M}_0$, to compare against. A simple model in this case could be a model where we simply estimate the mean for each language $\alpha_{\mathrm{LANG}[i]}$:
 
-\begin{align}
+\begin{equation}
+\begin{aligned}
   \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi) \\
-  \log(\lambda_i) & = \alpha + \alpha_{\mathrm{LANG}[i]} \\
-  (\#eq:m0wop)
-\end{align}
+  \log(\lambda_i) & = \alpha_{\mathrm{LANG}[i]} \\
+  \alpha_j & \sim \mathrm{Normal}(\bar{\alpha},\sigma_l) & \textrm{for LANG}=1,..,17\\
+  \bar{\alpha} & \sim \mathrm{Normal}(0,5)\\
+  \sigma_l & \sim \mathrm{Weibull}(2,1)\\
+  \phi & \sim \mathrm{Gamma}(0.01,0.01)
+\end{aligned}
+\end{equation}
 
-There's nothing strange with the above. We simply assume that n_bugs is distributed according to a Negative-Binomial process with the rate $\lambda$ (just like in Poisson) and a parameter $\phi$ that controls the variance (which must be positive). For the linear part in our model (Line 2) we use a $\log$ link to translate from the probability space $p \in (0,1)$.
+There's nothing strange with the above. We simply assume that n_bugs is distributed according to a Negative-Binomial process with the rate $\lambda$ (just like in Poisson) and a parameter $\phi$ that controls the variance (which must be positive). For the linear part in our model (Line 2) we use a $\log$ link to translate from the probability space $p \in (0,1)$. Let's look what the priors imply.
 
 ### Prior predictive checks
 
 ```{r, warning=FALSE, message=FALSE, error=FALSE, results='hide', cache=TRUE}
+p <- get_prior(n_bugs ~ 1 + (1 | language_id),
+           family = negbinomial(),
+    		   data=fse.data)
+
+p$prior[1] <- "normal(0,5)"
+p$prior[2] <- "exponential(1)"
+
 m0p <- brm(n_bugs ~ 1 + (1 | language_id),
            family = negbinomial(),
     		   data=fse.data,
+    		   prior = p,
     		   sample_prior = "only"
     		   )
 
-pp_check(m0p, nsamples = 100) + 
+y <- fse.data$n_bugs # our empirical outcomes
+y_rep <- posterior_predict(m0p) # samples from the posterior 
+
+ppc_dens_overlay(y, y_rep[1:100,]) + 
   scale_x_log10(
    breaks = scales::trans_breaks("log10", function(x) 10^x),
    labels = scales::trans_format("log10", scales::math_format(10^.x))
@@ -136,7 +152,13 @@ pp_check(m0p, nsamples = 100) +
   geom_vline(xintercept = max(fse.data$n_bugs), linetype = "longdash")
 ```
 
-The prior predictive checks (where we use default priors for now), show that the priors allow large (even absurd) values (the $x$-axis has been `log10()` transformed). The dashed line indicates the maximum number of bugs in our empirical data.
+The prior predictive check shows that the priors show great variability (the $x$-axis is `log10()` transformed), and we also have a number of values that are $+\infty$. The dark line is our empirical data $y$, while draws from our posterior (which has only been sampled using the priors) are the light blue lines ($y_{\mathrm{rep}}$). The dashed line indicates the maximum number of bugs in our empirical data $y$. But what maximum values (that is not $+\infty$) do the priors provide?
+
+```{r}
+max(y_rep, na.rm = T)
+```
+
+That's a very large value.
 
 ### Posterior predictive checks
 
@@ -146,6 +168,8 @@ Running the above model with default priors and settings (in later examples we w
 m0 <- brm(n_bugs ~ 1 + (1 | language_id),
           family = negbinomial(),
           data=fse.data,
+          prior = p,
+          iter = 5e3,
           refresh = 0
           )
 ```
@@ -198,19 +222,20 @@ mcmc_trace(m0) +
 
 ## Take I
 
-In the original study the authors used four population-level effects: devs_log, max_commit_age_log, commits_log, and insertions_log. If we would follow a principled Bayesian approach (and for that matter a frequentist approach) many would claim that some type of variable selection should take place. Later down below, Sect. \@ref(sect:nb-varsel), we will show how this can be done, but we do not include it here, since our intention is to follow the original study.
+In the original study the authors used four population-level effects: devs_log, max_commit_age_log, commits_log, and insertions_log. If we would follow a principled Bayesian approach (and for that matter a frequentist approach) many would claim that some type of variable selection should take place (since we are after good predictions). Later down below, Sect. \@ref(sect:nb-varsel), we will show how this can be done, but we do not include it here, since our intention is to follow the original study.
 
 Our next model, $\mathcal{M}_1$, is a model that estimates a grand mean, $\alpha$, four population-level effects ($\beta_1,\ldots,\beta_4$), and then employ varying intercepts according to language.
 
 In math speak this is what it looks like without the priors,
 
-\begin{align}
+\begin{equation}
+\begin{aligned}
   \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi)\\
-  \log(\lambda_i) & = \alpha + \beta_1 \mathrm{devs\_log}_i + \beta_2 \mathrm{max\_commit\_age\_log}_i\\ 
-                  & + \beta_3 \mathrm{commits\_log}_i + \beta_4 \mathrm{insertions\_log}_i\\
+  \log(\lambda_i) & = \beta_1 \cdot \mathrm{devs\_log}_i + \beta_2 \cdot \mathrm{max\_commit\_age\_log}_i\\ 
+                  & + \beta_3 \cdot \mathrm{commits\_log}_i + \beta_4 \cdot \mathrm{insertions\_log}_i\\
                   & + \alpha_{\mathrm{LANG}[i]} \\
-  (\#eq:m1wop)
-\end{align}
+\end{aligned}
+\end{equation}
 
 
 ### Prior predictive checks
@@ -226,23 +251,25 @@ First, we'll make sure to check what priors such a model expects us to set,
  )
 ```
 
-For our $\beta$s we have unsuitable uniform priors, $\mathrm{Uniform}(-\infty,\infty)$. For the intercept, $\alpha$, a Student's $t$ distribution with $\nu=3$, and the same for the standard deviation, $\sigma$, used for the varying intercepts (however, in this case it's automatically truncated with a lower bound of $0$ since $\sigma$ cannot be negative). Finally, there is a default prior for the shape, $\phi$, i.e., $\gamma(0.01,0.01)$.
+For our $\beta$s we have unsuitable uniform priors, $\mathrm{Uniform}(-\infty,\infty)$. For the intercepts, $\alpha$, a Student's $t$ distribution with $\nu=3$, and the same for the standard deviation, $\sigma$, used for the varying intercepts (however, in this case it's automatically truncated with a lower bound of $0$ since $\sigma$ cannot be negative). Finally, there is a default prior for the shape, $\phi$, i.e., $\gamma(0.01,0.01)$.
 
-It might be prudent to set our own priors to see, using prior predictive checks, how the prior probability distribution looks like when we sample only from the priors.^[In this replication package we follow recommendations on priors. For an introduction please see (here)[https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations].] We'll set $\mathrm{Normal}(0,5)$ for our intercept, $\mathrm{Weibull}(2,1)$ for our dispersion $\sigma$, and $\mathrm{Normal}(0,0.5)$ for each of our four $\beta$s. In math notation we now have this model,
+It might be prudent to set our own priors to see how the priors look like on the outcome scale.^[In this replication package we follow recommendations on priors. For an introduction please see (here)[https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations].] We'll set $\mathrm{Normal}(0,5)$ for our intercepts, $\mathrm{Weibull}(2,1)$ for our dispersion $\sigma$, and $\mathrm{Normal}(0,0.5)$ for each of our four $\beta$s. In math notation we now have this model,
 
-\begin{align}
+\begin{equation}
+\begin{aligned}
   \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi) &\\
-   \log(\lambda_i) & = \alpha + \beta_1 \mathrm{devs\_log}_i + \beta_2 \mathrm{max\_commit\_age\_log}_i &\\ 
-                  & + \beta_3 \mathrm{commits\_log}_i + \beta_4 \mathrm{insertions\_log}_i &\\
+   \log(\lambda_i) & = \beta_1 \cdot \mathrm{devs\_log}_i + \beta_2 \cdot \mathrm{max\_commit\_age\_log}_i &\\ 
+                  & + \beta_3 \cdot \mathrm{commits\_log}_i + \beta_4 \cdot \mathrm{insertions\_log}_i &\\
                   & + \alpha_{\mathrm{LANG}[i]} &\\
-  \alpha & \sim \textrm{Normal}(0,5)\\
-  \beta_1,\ldots,\beta_4 & \sim \textrm{Normal}(0,0.5) &\\
-  \alpha_{\mathrm{LANG}} & \sim \mathrm{Weibull}(2,1) & & \textrm{for LANG}=1,..,17\\
+  \alpha_j & \sim \textrm{Normal}(\bar{\alpha},\sigma_l) & \textrm{for LANG}=1,..,17\\
+  \bar{\alpha} & \sim \mathrm{Normal}(0,5) \\
+  \sigma_l & \sim \mathrm{Weibull}{(2,1)} \\
+  \beta_1,\ldots,\beta_4 & \sim \textrm{Normal}(0,0.5)\\
   \phi & \sim \textrm{Gamma}(0.01,0.01) &
-  (\#eq:m1)
-\end{align}
+\end{aligned}
+\end{equation}
 
-The $\mathrm{Gamma}$ prior on $\phi$ allows only positive real numbers, as does the $\mathrm{Weibull}(2,1)$ for our varying intercepts. Additionally, having $\mathrm{Normal}(0,0.05)$ on our $\beta$s might seem tight, but the additive terms imply a variance of $(0.5*4)^2=4$ (and then we also use a log link function! Let's see what the prior predictive checks will show. 
+The $\mathrm{Gamma}$ prior on $\phi$ allows only positive real numbers, as does the $\mathrm{Weibull}(2,1)$ for our varying intercept. Additionally, having $\mathrm{Normal}(0,0.05)$ on our $\beta$s might seem tight, but the additive terms imply a variance of $\exp^{(0.05*4)^2}=1.04$. Let's see what the prior predictive checks will show. 
 
 Sample the model using no data.
 
@@ -265,10 +292,12 @@ m1p <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
 
 We used only one chain and we sampled for only $1000$ iterations.^[We used Hamiltonian Monte Carlo with the No U-Turn Sampler (NUTS), which `brms` uses thanks to the functionality from the `Stan` package.] Half of the iterations are thrown away (warm-up), which leads us to having $500$ samples in our prior probability distribution.^[In the remaining executions we'll refrain from showing the output, but we have made sure that no warnings exist when sampling (simply running this `Rmd` file yourself will allow you to check this).]
 
-Let's now plot $100$ samples, $y_{\mathrm{rep}}$, from our prior probability distribution, and compare them to our empirical data, $y$.
+Let's now plot samples, $y_{\mathrm{rep}}$, from our prior probability distribution, and compare them to our empirical data, $y$.
 
 ```{r m1-pripc, warning=FALSE, message=FALSE}
-pp_check(m1p, nsamples = 100) + 
+y_rep <- posterior_predict(m1p)
+
+ppc_dens_overlay(y, y_rep[1:100,]) + 
   scale_x_log10(
    breaks = scales::trans_breaks("log10", function(x) 10^x),
    labels = scales::trans_format("log10", scales::math_format(10^.x))
@@ -280,9 +309,13 @@ pp_check(m1p, nsamples = 100) +
   geom_vline(xintercept = max(fse.data$n_bugs), linetype = "longdash")
 ```
 
-In the plot above we've $\log10()$ transformed the $x$-axis so we can see what's actually happening. In short, the priors are all over the place (and a number of them are $\infty$). The maximum number of bugs in our dataset is depicted by the dashed line.
+In short, the priors are all over the place (and a number of them are $\infty$). The maximum number of bugs in our dataset is depicted by the dashed line, and the maximum number our priors provide (i.e., $\neq \infty$) is,
 
-Let's sample the model with our empirical data by simply removing the statement `sample_prior = "only"` and run with the default number of chains ($4$) and iterations per chain ($2000$).
+```{r}
+max(y_rep, na.rm = T)
+```
+
+Let's sample the model with our empirical data by simply removing the statement `sample_prior = "only"`.
 
 ```{r m0-2, warning=FALSE, message=FALSE, error=FALSE, results='hide'}
 m1 <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log +
@@ -308,7 +341,7 @@ pp_check(m1) +
   ylab("Density")
 ```
 
-We see that the model has a much better fit to the empirical data. This is an indication that adding the four population-level parameters makes a difference.
+Clearly the model fits the empirical data better. This is an indication that adding the four population-level parameters makes a difference.
 
 ### Diagnostics
 
@@ -341,7 +374,6 @@ mcmc_trace(m1) +
 ```
 
 Once the model has passed all diagnostics we can start putting *some* trust in it. Let's see what the model has estimated!
-
 
 ### The fallacy of placing confidence in point estimates
 
@@ -381,17 +413,18 @@ There's clearly a difference in number of bugs between the C (upper) and the C# 
 
 In the previous section we created a model, $\mathcal{M}_1$, that we can continue to build on. The logical next step is to keep our varying intercepts, but add the concept of varying slopes. In short, not only will each language's intercept be modeled separately (i.e., where it crosses the $y$-axis), we will also model each language's slope separately (i.e., the ratio of the change along the $y$-axis to the change along the $x$-axis). Mathematically speaking we thus have,
 
-\begin{align}
+\begin{equation}
+\begin{aligned}
   \mathrm{n\_bugs}_i & \sim \textrm{Negative-Binomial}(\lambda_i,\phi)\\
-  \log(\lambda_i) & = \alpha_{\mathrm{LANG}[i]} + \beta_{\mathrm{LANG}[i]} \mathrm{devs\_log}_i + \gamma_{\mathrm{LANG}[i]} \mathrm{max\_commit\_age\_log}_i \\
-                  & + \delta_{\mathrm{LANG}[i]} \mathrm{commits\_log}_i + \epsilon_{\mathrm{LANG}[i]} \mathrm{insertions\_log}_i + \zeta_{\mathrm{PROJ}[i]}\\
+  \log(\lambda_i) & = \alpha_{\mathrm{LANG}[i]} + \beta_{\mathrm{LANG}[i]} \cdot \mathrm{devs\_log}_i + \gamma_{\mathrm{LANG}[i]} \cdot \mathrm{max\_commit\_age\_log}_i \\
+                  & + \delta_{\mathrm{LANG}[i]} \cdot \mathrm{commits\_log}_i + \epsilon_{\mathrm{LANG}[i]} \cdot \mathrm{insertions\_log}_i + \zeta_{\mathrm{PROJ}[i]}\\
 
 \begin{bmatrix}
-\alpha_{\mathrm{LANG}[i]} \\
-\beta_{\mathrm{LANG}[i]} \\
-\gamma_{\mathrm{LANG}[i]} \\
-\delta_{\mathrm{LANG}[i]} \\
-\epsilon_{\mathrm{LANG}[i]}
+\alpha_{\mathrm{LANG}} \\
+\beta_{\mathrm{LANG}} \\
+\gamma_{\mathrm{LANG}} \\
+\delta_{\mathrm{LANG}} \\
+\epsilon_{\mathrm{LANG}}
 \end{bmatrix}
 & \sim \mathrm{MVNormal} 
 
@@ -403,10 +436,10 @@ In the previous section we created a model, $\mathcal{M}_1$, that we can continu
 \delta\\
 \epsilon
 \end{bmatrix}
-, \mathbf{S}
+, \Sigma
 \right)\\
 
-\mathbf{S} & = \left( 
+\Sigma & = \left( 
 \begin{matrix}
 \sigma_\alpha & 0 & 0 & 0 & 0\\
 0 & \sigma_\beta & 0 & 0 & 0 \\
@@ -428,17 +461,17 @@ In the previous section we created a model, $\mathcal{M}_1$, that we can continu
 \end{matrix}
 \right)
 \\
-
-  \alpha & \sim \textrm{Normal}(0,5)\\
-  \beta,\ldots,\epsilon & \sim \mathrm{Normal}(0,0.5)\\
+  \alpha,\ldots,\epsilon & \sim \mathrm{Normal}(0,0.5)\\
   \sigma_\alpha,\ldots,\sigma_\epsilon & \sim \mathrm{Weibull}(2,1)\\
   \mathbf{R} & \sim \mathrm{LKJ}(2)\\
-  \zeta_{\mathrm{PROJ}[i]} & \sim \mathrm{Weibull}(2,1) & \textrm{for PROJ} = 1,..,729\\
+  \zeta_j & \sim \mathrm{Normal(\bar{\alpha}, \sigma_p)} & \textrm{for PROJ} = 1,..,729\\
+  \bar{\alpha} & \sim \mathrm{Normal(0,5)}\\
+  \sigma_p & \sim \mathrm{Weibull(2,1)}\\
   \phi & \sim \textrm{Gamma}(0.01,0.01)
-  (\#eq:m2)
-\end{align}
+\end{aligned}
+\end{equation}
 
-There are a few things that makes this model look different compared to Equation \@ref(eq:m1). The first thing is that for each population level effect we set a varying slopes (Lines $2$--$3$). Then, on Lines $4$--$5$ we model the slopes using a multivariate Normal (we want to model the correlation between slopes). We also set a Lewandowski-Kurowicka-Joe (LKJ) prior to model the covariance matrix of the multivariate normal distribution (Line $9$). Finally, as seen at the end of Line $3$, we have added a new varying intercept according to project ID (and on Line $10$ we set the prior).
+There are a few things that makes this model look different compared to the previous model. The first thing is that for each population level effect we set a varying slopes (Lines $2$--$3$). Then, on Lines $4$--$5$ we model the slopes using a multivariate Normal (we want to model the correlation between slopes). We also set a Lewandowski-Kurowicka-Joe (LKJ) prior to model the covariance matrix of the multivariate normal distribution (Line $9$). Finally, as seen at the end of Line $3$, we add another varying intercept ($\zeta_{\mathrm{PROJ}[i]}$) according to project ID (and on Line $10$ we set the prior with hyperparameters).
 
 The idea with the latter part is that we believe projects could learn from each other by employing partial pooling. Some projects have several rows of data, while some only a few. If the projects having more data informs projects with less data we might learn more, but still avoid overfitting.
 
@@ -491,7 +524,9 @@ m2p <- brm(n_bugs ~ 1 + devs_log + max_commit_age_log + commits_log + insertions
 ```
 
 ```{r m2-post, warning=FALSE, message=FALSE}
-pp_check(m2p, nsamples = 100) + 
+y_rep <- posterior_predict(m1p)
+
+ppc_dens_overlay(y, y_rep[1:100,]) + 
   scale_x_log10(
    breaks = scales::trans_breaks("log10", function(x) 10^x),
    labels = scales::trans_format("log10", scales::math_format(10^.x))
