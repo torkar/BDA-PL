@@ -3,7 +3,7 @@
 
 # Replication package for manuscript on Bayesian analysis on programming languages data
 
-In the `docs` folder you will find two `Rmd` scripts developed for this replication package. Both scripts can also be found as `html` files in that folder. The easiest way to work with this packages is to:
+In the `docs` folder you will find two `Rmd` scripts developed for this replication package. Both scripts can also be found as `html` files in that folder. The easiest way to work with this package is to:
 
 1. Clone the repository. 
 2. Open the `BDA-PL.Rproj` file in `RStudio`.
