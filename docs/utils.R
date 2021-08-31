@@ -4,6 +4,7 @@
 ## The tarball is then used to determine if the data is available. Thus, delete the tarball to pull the data anew.
 setup.data  <- function(dirname="Data")
 {
+    options(timeout=100)
     ## Create directory if it doesn't already exist
     dir.create(dirname, showWarnings=FALSE)
     zipfile  <- file.path(dirname, "toplas.zip")

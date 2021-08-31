@@ -90,6 +90,9 @@ table(fse.data$n_bugs == 0)
 ```
 
 Since n_bugs $\in \mathbb{N}^+$ we would expect to use a Poisson($\lambda$) likelihood (and of course we tried that first). If we, however, look at some more descriptive statistics of 'n_bugs' we see that there is a large difference between the mean and the variance,
+```{r}
+summary(fse.data$devs)
+```
 
 ```{r}
 summary(fse.data$n_bugs)
@@ -589,7 +592,7 @@ Effective sample size (ESS):
 min(neff_ratio(m2), na.rm = TRUE)
 ```
 
-Finally, we have also visually inspected the trace plots, but since this model estimates more than $1787$ parameters we choose not to show it here.
+Finally, we have also visually inspected the trace plots, but since this model estimates more than $837$ parameters we choose not to show it here.
 
 In the end, the model passed all diagnostics, but before we continue analyzing the output of this, more complex model, we might as well see which of our three models, $\{\mathcal{M}_0, \mathcal{M}_1, \mathcal{M}_2\}$, has the best out of sample prediction capabilities.
 
@@ -801,7 +804,50 @@ The plots below shows posterior predictions of the number of bugs, when our cova
 
 ```{r, echo=FALSE}
 # nd_median and PPC_median we have above already. Let's create
-# data frames where we also set covariates at their min and max values
+# data frames where we also set covariates at their min and max values,
+# and at 25% and 75%.
+# e.g., 
+
+# For devs
+# max = 1383
+# min = 1
+# median = 15
+# 1st quant = 6
+# 3rd quant = 36
+
+# max_commit_age
+# max = 16090
+# min = 12
+# 1st quant = 572
+# 3rd quant = 1596
+
+# commits
+# max = 305361
+# min = 28
+# 1st quant = 81
+# 3rd quant = 825
+
+# insertions
+# max = 27056685
+# min = 127
+# 1st quant = 7354
+# 3rd quant = 149464
+
+
+nd_1stQ <- data.frame(language_id=seq(1:17),
+                     project_id = NA,
+                     devs_log=log(6),
+                     max_commit_age_log=log(572),
+                     commits_log=log(81),
+                     insertions_log=log(7354))
+
+nd_3rdQ <- data.frame(language_id=seq(1:17),
+                     project_id = NA,
+                     devs_log=log(36),
+                     max_commit_age_log=log(1596),
+                     commits_log=log(825),
+                     insertions_log=log(149464))
+
 nd_min <- data.frame(language_id=seq(1:17),
                      project_id = NA,
                      devs_log=min(fse.data$devs_log),
@@ -817,17 +863,29 @@ nd_max <- data.frame(language_id=seq(1:17),
                      insertions_log=max(fse.data$insertions_log))
 
 # posterior predictions
+PPC_1stQ <- posterior_predict(M, newdata = nd_1stQ)
+PPC_3rdQ <- posterior_predict(M, newdata = nd_3rdQ)
 PPC_min <- posterior_predict(M, newdata = nd_min)
 PPC_max <- posterior_predict(M, newdata = nd_max)
 
+colnames(PPC_1stQ) <- levels(fse.data$language)
+colnames(PPC_3rdQ) <- levels(fse.data$language)
 colnames(PPC_min) <- levels(fse.data$language)
 colnames(PPC_max) <- levels(fse.data$language)
 
 PPC_max <- as.data.frame(PPC_max) %>%
   gather(lang, bugs)
+
 PPC_median <- as.data.frame(PPC_median) %>%
   gather(lang, bugs)
+
 PPC_min <- as.data.frame(PPC_min) %>%
+  gather(lang, bugs)
+
+PPC_1stQ <- as.data.frame(PPC_1stQ) %>%
+  gather(lang, bugs)
+
+PPC_3rdQ <- as.data.frame(PPC_3rdQ) %>%
   gather(lang, bugs)
 ```
 
@@ -837,6 +895,8 @@ What is clearly evident is that the order (languages are plotted in a descending
 PPC_max$bugs1 <- PPC_max$bugs+1 # add 1 to avoid NAs when doing log10()
 PPC_median$bugs1 <- PPC_median$bugs+1
 PPC_min$bugs1 <- PPC_min$bugs+1
+PPC_1stQ$bugs1 <- PPC_1stQ$bugs+1
+PPC_3rdQ$bugs1 <- PPC_3rdQ$bugs+1
 
 # Move to GitHub
 # horizontal axis for PostPC add ALSO more ticks
@@ -845,7 +905,7 @@ PPC_min$bugs1 <- PPC_min$bugs+1
 p1 <- ggplot(PPC_max, aes(x=reorder(lang, -bugs1), y=bugs1)) +
   geom_violin() +
   theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") + 
-  ggtitle("Max (developers = 1383, max commit age = 16090, \ncommits = 305361, insertions = 263641)") + 
+  ggtitle("Max (developers = 1383, max commit age = 16090, commits = 305361, insertions = 263641)") + 
   scale_y_continuous(breaks = c(1e4,3e4,1e5,3e5,1e6), 
                      minor_breaks = NULL,
                      trans="log10") + 
@@ -854,7 +914,7 @@ p1 <- ggplot(PPC_max, aes(x=reorder(lang, -bugs1), y=bugs1)) +
 p2 <- ggplot(PPC_median, aes(x=reorder(lang, -bugs1), y=bugs1)) +
   geom_violin() +
   theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") + 
-  ggtitle("Median (developers = 15, max commit age = 1029, \ncommits = 248, insertions = 263641)") + 
+  ggtitle("Median (developers = 15, max commit age = 1029, commits = 248, insertions = 263641)") + 
   scale_y_continuous(breaks=c(10,20,40,80,160,320), 
                      minor_breaks = NULL,
                      trans="log10") + geom_hline(yintercept=median(PPC_median$bugs1), size=0.2)
@@ -867,7 +927,23 @@ p3 <- ggplot(PPC_min, aes(x=reorder(lang, -bugs1), y=bugs1)) +
                      trans="log10") + 
   geom_hline(yintercept=median(PPC_min$bugs1), size=0.2)
 
-p1/p2/p3
+p1stQ <- ggplot(PPC_1stQ, aes(x=reorder(lang, -bugs1), y=bugs1)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") + 
+  ggtitle("25th percentile (developers = 346, max commit age = 4023, commits = 76340, insertions = 6764171)")+ 
+  scale_y_continuous(minor_breaks = NULL, 
+                     trans="log10") + 
+  geom_hline(yintercept=median(PPC_1stQ$bugs1), size=0.2)
+
+p3rdQ <- ggplot(PPC_3rdQ, aes(x=reorder(lang, -bugs1), y=bugs1)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + xlab("") + ylab("") + 
+  ggtitle("75th percentile (developers = 1038, max commit age = 12068, commits = 229021, insertions = 20292514)")+ 
+  scale_y_continuous(minor_breaks = NULL, 
+                     trans="log10") + 
+  geom_hline(yintercept=median(PPC_3rdQ$bugs1), size=0.2)
+
+p1/p3rdQ/p2/p1stQ/p3
 ```
 
 Which of the above plots tells the truth? Well, the truth is connected to your reality, i.e., practical significance. Hence, it varies a lot depending on contextual factors. In our case these factors are represented by the covariates' levels/settings, but many other such factors exist in the form of omitted variable bias.
