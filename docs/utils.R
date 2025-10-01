@@ -12,7 +12,7 @@ setup.data  <- function(dirname="Data")
     toplas.dir  <- file.path(dirname, "TOPLAS_Artifact")
     ## yes it's a tarball inside a zip (the latter created by Dropbox)
     if (!file.exists(toplas)) {
-        download.file("https://www.dropbox.com/sh/gqcvfzs5awep573/AABfGYQHjmGiExIcXfhb-GPqa?dl=1&preview=toplas.tar.gz",
+        download.file("https://www.dropbox.com/scl/fi/wy08qf08a1xq6x1ijxqhn/toplas.tar.gz?rlkey=zfyxxvvyasppapoydjj4ooa7j&dl=0",
                       zipfile)
         unzip(zipfile, list=FALSE, exdir=dirname)
         originals  <- file.path("original-artifact", c("_newSha.csv", "_everything.csv"))
